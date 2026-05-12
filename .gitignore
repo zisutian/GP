@@ -172,3 +172,9 @@ data_process/
 
 batchscript-*
 results/
+
+
+####
+.vscode
+.codex
+.agents
