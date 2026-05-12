@@ -1,3 +1,7 @@
-from .internvl_wrapper import InternVLWrapper
+from .internvl_wrapper import NativeInternVLWrapper
+from .siglip_embedding_wrapper import SigLIPPrefixInternVLWrapper
 
-__all__ = ["InternVLWrapper"]
+__all__ = [
+    "NativeInternVLWrapper",
+    "SigLIPPrefixInternVLWrapper",
+]

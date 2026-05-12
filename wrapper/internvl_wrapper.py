@@ -77,8 +77,8 @@ def has_model_weights(model_path: Path) -> bool:
     return any(model_path.glob("*.safetensors")) or any(model_path.glob("*.bin")) or any(model_path.glob("*.pt"))
 
 
-class InternVLWrapper:
-    """Small inference wrapper around InternVL2.5 chat-style models."""
+class NativeInternVLWrapper:
+    """Native InternVL wrapper using the model's built-in <image> token path."""
 
     def __init__(
         self,

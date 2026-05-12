@@ -1,7 +1,7 @@
 import argparse
 from pathlib import Path
 
-from internvl_wrapper import DEFAULT_MODEL_PATH, InternVLWrapper
+from internvl_wrapper import DEFAULT_MODEL_PATH, NativeInternVLWrapper
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +21,7 @@ def parse_args():
 
 def main():
     args = parse_args()
-    wrapper = InternVLWrapper(
+    wrapper = NativeInternVLWrapper(
         model_path=args.model_path,
         device=args.device,
         max_dynamic_patch=args.max_dynamic_patch,

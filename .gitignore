@@ -179,3 +179,5 @@ results/
 .codex
 .agents
 InternVL/pretrained
+wrapper/pretrained/paligemma2-3b-mix-224
+
