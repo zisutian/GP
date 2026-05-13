@@ -179,6 +179,7 @@ results/
 .codex
 .agents
 data
+result
 InternVL/pretrained
 InternVL/internvl_chat/work_dirs
 wrapper/pretrained/paligemma2-3b-mix-224

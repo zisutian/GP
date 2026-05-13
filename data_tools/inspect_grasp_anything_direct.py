@@ -8,9 +8,10 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INTERNVL_CHAT = REPO_ROOT / "InternVL/internvl_chat"
+sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(INTERNVL_CHAT))
 
-from internvl.train.vcot_direct_lmdb import build_direct_grasp_item
+from data_tools.vcot_direct_lmdb import build_direct_grasp_item
 
 
 def parse_args():

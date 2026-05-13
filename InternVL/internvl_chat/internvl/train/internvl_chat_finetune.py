@@ -52,9 +52,9 @@ from internvl.train.dataset import (ConcatDataset, TCSLoader,
                                     preprocess_internvl2_5, preprocess_mpt,
                                     preprocess_phi3)
 from internvl.train.dataset_packed import PackedDataset, packed_collate_fn
-from internvl.train.vcot_direct_lmdb import (build_direct_grasp_item,
-                                             direct_grasp_conversation_preview,
-                                             is_direct_grasp_record)
+from data_tools.vcot_direct_lmdb import (build_direct_grasp_item,
+                                         direct_grasp_conversation_preview,
+                                         is_direct_grasp_record)
 from PIL import Image, ImageFile, PngImagePlugin, UnidentifiedImageError
 from torch.utils.data import Dataset
 from transformers import (AutoConfig, AutoModelForCausalLM, AutoTokenizer,

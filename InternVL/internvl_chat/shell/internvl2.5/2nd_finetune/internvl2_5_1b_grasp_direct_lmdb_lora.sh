@@ -6,14 +6,14 @@ PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-4}
 GRADIENT_ACC=$((BATCH_SIZE / PER_DEVICE_BATCH_SIZE / GPUS))
 LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
+GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
-export PYTHONPATH="${PYTHONPATH}:$(pwd)"
+export PYTHONPATH="${GP_ROOT}:$(pwd):${PYTHONPATH:-}"
 export MASTER_PORT=${MASTER_PORT:-34229}
 export TF_CPP_MIN_LOG_LEVEL=3
 export TRANSFORMERS_VERBOSITY=${TRANSFORMERS_VERBOSITY:-${LOG_LEVEL}}
 export LAUNCHER=pytorch
 
-GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 MODEL_PATH=${MODEL_PATH:-"${GP_ROOT}/InternVL/pretrained/OpenGVLab/InternVL2_5-1B"}
 META_PATH=${META_PATH:-"${GP_ROOT}/data/vcot_grasp/direct/internvl_meta_train.json"}
 OUTPUT_DIR=${OUTPUT_DIR:-"work_dirs/internvl_chat_v2_5/internvl2_5_1b_grasp_direct_lmdb_lora"}

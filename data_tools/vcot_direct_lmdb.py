@@ -22,12 +22,14 @@ def direct_grasp_conversation_preview(record: dict[str, Any]) -> list[dict[str, 
     ]
 
 
-def build_direct_grasp_item(record: dict[str, Any], image_size: int = 416) -> dict[str, Any]:
+def build_direct_grasp_item(record: dict[str, Any], image_size: int = 416, include_all_grasps: bool = False) -> dict[str, Any]:
     source_root = Path(record["source_root"])
     image = _load_image(source_root / "lmdb/image", record["image_key"])
-    grasp = _load_grasp(source_root / "lmdb/grasp_label_positive", record["grasp_key"])
+    grasp_lmdb_path = source_root / "lmdb/grasp_label_positive"
+    grasps = _load_grasps(grasp_lmdb_path, record["grasp_key"]) if include_all_grasps else None
+    grasp = grasps[0] if grasps is not None else _load_grasp(grasp_lmdb_path, record["grasp_key"])
     obj_name = record["obj_name"]
-    return {
+    item = {
         "image": image,
         "conversations": [
             {"from": "human", "value": f"<image>\ngrasp the {obj_name}"},
@@ -35,6 +37,9 @@ def build_direct_grasp_item(record: dict[str, Any], image_size: int = 416) -> di
         ],
         "meta": record,
     }
+    if grasps is not None:
+        item["target_labels"] = grasps
+    return item
 
 
 def _get_lmdb_env(path: str | Path, max_readers: int = 2048):
@@ -68,6 +73,10 @@ def _load_image(lmdb_path: str | Path, key: str) -> Image.Image:
 
 
 def _load_grasp(lmdb_path: str | Path, key: str) -> list[float]:
+    return _load_grasps(lmdb_path, key)[0]
+
+
+def _load_grasps(lmdb_path: str | Path, key: str) -> list[list[float]]:
     import torch
 
     grasp_bytes = _get_lmdb_bytes(lmdb_path, key)
@@ -77,7 +86,7 @@ def _load_grasp(lmdb_path: str | Path, key: str) -> list[float]:
     except TypeError:
         buffer.seek(0)
         grasp = torch.load(buffer, map_location="cpu")
-    return [float(value) for value in grasp[0][1:]]
+    return [[float(value) for value in row[1:]] for row in grasp]
 
 
 def _normalize_grasp(grasp: list[float], image_size: int) -> list[float]:

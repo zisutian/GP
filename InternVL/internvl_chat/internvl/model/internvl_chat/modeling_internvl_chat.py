@@ -105,7 +105,11 @@ class InternVLChatModel(PreTrainedModel):
             self.wrap_backbone_lora(r=config.use_backbone_lora, lora_alpha=2 * config.use_backbone_lora)
 
         if config.use_llm_lora:
-            self.wrap_llm_lora(r=config.use_llm_lora, lora_alpha=2 * config.use_llm_lora)
+            self.wrap_llm_lora(
+                r=config.use_llm_lora,
+                lora_alpha=2 * config.use_llm_lora,
+                modules_to_save=getattr(config, 'llm_lora_modules_to_save', None),
+            )
         # Initialize weights and apply final processing. See: https://github.com/huggingface/transformers/pull/37708
         self.post_init()
     def wrap_backbone_lora(self, r=128, lora_alpha=256, lora_dropout=0.05):
