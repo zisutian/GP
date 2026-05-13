@@ -112,7 +112,7 @@ conda run -n 260513-internvl python data_tools/inspect_grasp_anything_direct.py 
 InternVL 训练代码已加入 direct LMDB 读取分支：
 
 ```text
-InternVL/internvl_chat/internvl/train/vcot_direct_lmdb.py
+data_tools/vcot_direct_lmdb.py
 InternVL/internvl_chat/internvl/train/internvl_chat_finetune.py
 ```
 
