@@ -52,6 +52,9 @@ from internvl.train.dataset import (ConcatDataset, TCSLoader,
                                     preprocess_internvl2_5, preprocess_mpt,
                                     preprocess_phi3)
 from internvl.train.dataset_packed import PackedDataset, packed_collate_fn
+from internvl.train.vcot_direct_lmdb import (build_direct_grasp_item,
+                                             direct_grasp_conversation_preview,
+                                             is_direct_grasp_record)
 from PIL import Image, ImageFile, PngImagePlugin, UnidentifiedImageError
 from torch.utils.data import Dataset
 from transformers import (AutoConfig, AutoModelForCausalLM, AutoTokenizer,
@@ -349,6 +352,7 @@ class LazySupervisedDataset(Dataset):
             self.rng.shuffle(self.raw_data)
 
         self.root = meta['root']
+        self.vcot_image_size = meta.get('vcot_image_size', 416)
         self.cached_data_dict = {}
         self.tcs_loader = tcs_loader
         self.group_by_length = group_by_length
@@ -368,6 +372,8 @@ class LazySupervisedDataset(Dataset):
                 if 'length' in data_item:
                     token_length = data_item['length']  # Use precomputed length if available
                 else:
+                    if is_direct_grasp_record(data_item):
+                        data_item['conversations'] = direct_grasp_conversation_preview(data_item)
                     # Compute token length using the tokenizer
                     conversations = '\n'.join([temp['value'] for temp in data_item['conversations']])
                     str_length = len(conversations)
@@ -425,11 +431,14 @@ class LazySupervisedDataset(Dataset):
         if '<image>' not in data_item['conversations'][0]['value']:
             data_item['conversations'][0]['value'] = '<image>\n' + data_item['conversations'][0]['value']
 
-        # Merge the image path
-        image_path = self.get_image_path(data_item['image'])
+        if isinstance(data_item['image'], Image.Image):
+            image = data_item['image']
+        else:
+            # Merge the image path
+            image_path = self.get_image_path(data_item['image'])
 
-        # Load the image using tcs_loader if available, otherwise use PIL
-        image = self.load_image(image_path)
+            # Load the image using tcs_loader if available, otherwise use PIL
+            image = self.load_image(image_path)
 
         if self.dynamic_image_size:  # If dynamic image size is enabled, preprocess the image dynamically
             images = dynamic_preprocess(image, min_num=self.min_dynamic_patch, max_num=self.max_dynamic_patch,
@@ -644,9 +653,13 @@ class LazySupervisedDataset(Dataset):
                 raise StopIteration
             try:
                 data_item = json.loads(self.raw_data[i])
+                if is_direct_grasp_record(data_item):
+                    data_item = build_direct_grasp_item(data_item, image_size=self.vcot_image_size)
                 # conversations = data_item['conversations']
                 # check_conversations_repetition(conversations, repeat_threshold=0.4, ngram=10)
-                if 'image' in data_item and len(data_item['image']) != 0:
+                if 'image' in data_item and isinstance(data_item['image'], Image.Image):
+                    ret = self.multi_modal_get_item(data_item)
+                elif 'image' in data_item and len(data_item['image']) != 0:
                     if type(data_item['image']) == list:
                         ret = self.multi_modal_multi_image_get_item(data_item)
                     else:
@@ -833,6 +846,8 @@ def main():
 
     log_level = training_args.get_process_log_level()
     logger.setLevel(log_level)
+    for third_party_logger in ['DeepSpeed', 'deepspeed', 'internvl.model']:
+        logging.getLogger(third_party_logger).setLevel(log_level)
     set_verbosity(log_level)
     enable_default_handler()
     enable_explicit_format()
@@ -871,6 +886,7 @@ def main():
     token_list = [IMG_START_TOKEN, IMG_END_TOKEN, IMG_CONTEXT_TOKEN,
                   QUAD_START_TOKEN, QUAD_END_TOKEN, REF_START_TOKEN,
                   REF_END_TOKEN, BOX_START_TOKEN, BOX_END_TOKEN]
+    token_list += [f'<loc{i:04d}>' for i in range(1024)]
     num_new_tokens = tokenizer.add_tokens(token_list, special_tokens=True)
     img_context_token_id = tokenizer.convert_tokens_to_ids(IMG_CONTEXT_TOKEN)
     tcs_loader = TCSLoader('~/petreloss.conf') if has_tcs_loader else None
@@ -998,14 +1014,29 @@ def main():
         _freeze_params(model.language_model)
 
     if model_args.unfreeze_lm_head:
-        model.language_model.lm_head.requires_grad = True
+        input_embeddings = model.language_model.get_input_embeddings()
+        output_embeddings = model.language_model.get_output_embeddings()
+        if input_embeddings is not None:
+            for param in input_embeddings.parameters():
+                param.requires_grad = True
+        if output_embeddings is not None:
+            for param in output_embeddings.parameters():
+                param.requires_grad = True
+        if hasattr(model.language_model, 'lm_head'):
+            for param in model.language_model.lm_head.parameters():
+                param.requires_grad = True
 
     if model_args.use_backbone_lora:
         model.wrap_backbone_lora(r=model_args.use_backbone_lora, lora_alpha=2 * model_args.use_backbone_lora)
         model.config.use_backbone_lora = model_args.use_backbone_lora
 
     if model_args.use_llm_lora:
-        model.wrap_llm_lora(r=model_args.use_llm_lora, lora_alpha=2 * model_args.use_llm_lora)
+        modules_to_save = ['embed_tokens', 'lm_head'] if model_args.unfreeze_lm_head else None
+        model.wrap_llm_lora(
+            r=model_args.use_llm_lora,
+            lora_alpha=2 * model_args.use_llm_lora,
+            modules_to_save=modules_to_save,
+        )
         model.config.use_llm_lora = model_args.use_llm_lora
 
     if model_args.freeze_mlp:

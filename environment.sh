@@ -6,7 +6,12 @@ pip install torch==2.2.0 torchvision==0.17.0 torchaudio==2.2.0 --index-url https
 cd "$(dirname "${BASH_SOURCE[0]}")/InternVL"
 pip install -r requirements/internvl_chat.txt
 
+# InternVL patches import HuggingFace datasets at startup.
+pip install datasets==2.18.0
+pip install "https://github.com/Dao-AILab/flash-attention/releases/download/v2.5.8/flash_attn-2.5.8+cu122torch2.2cxx11abiFALSE-cp39-cp39-linux_x86_64.whl"
+
 pip install pandas lmdb opencv-python tensorboardX
+
 
 # Optional but recommended: keep pretrained weights inside this project so
 # training scripts can run offline/reproducibly after the first download.

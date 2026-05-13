@@ -1,6 +1,18 @@
 # Wrapper 说明
 
-这个目录用于实验两种 InternVL2.5-1B 图像输入方式，并为后续引入 VCoTGrasp 的抓取训练流程做准备。
+当前只保留 InternVL2.5 原生图像输入路线，用来做最简单的 direct grasp baseline。
+
+目标：
+
+```text
+原图 + "grasp the {obj_name}" -> <loc....><loc....><loc....><loc....><loc....>
+```
+
+输出 5 个 `<loc>` token，对应归一化抓取框：
+
+```text
+[x, y, w, h, angle]
+```
 
 ## 文件结构
 
@@ -8,13 +20,16 @@
 wrapper/
   internvl_wrapper.py
   demo_internvl.py
-  siglip_embedding_wrapper.py
-  demo_siglip_embedding.py
-  pretrained/paligemma2-3b-mix-224/
   __init__.py
+
+data_tools/
+  prepare_grasp_anything_direct.py
+  inspect_grasp_anything_direct.py
+
+train_grasp_direct_lmdb_lora.sh
 ```
 
-## 1. 原生 InternVL 路线
+## InternVL 原生推理
 
 文件：
 
@@ -29,136 +44,83 @@ demo_internvl.py
 NativeInternVLWrapper
 ```
 
-功能：
-
-使用 InternVL 原生的图像输入方式，也就是通过 InternVL 自带的 `<image>` / image context token 机制，把图像特征插入语言模型。
-
 用途：
 
-- 验证本地 `InternVL2_5-1B` 权重是否可正常加载
-- 验证普通图像问答链路是否跑通
-- 作为 baseline，对比后续 SigLIP prefix 路线
+- 加载 `InternVL2_5-1B`
+- 使用 InternVL 原生 `<image>` / image context token 机制
+- 验证普通图像问答和后续 direct grasp 推理
 
-运行示例：
+运行：
 
 ```bash
 cd /home/2025201095KZJ1/code/VCoTGrasp/GP/wrapper
 python demo_internvl.py
 ```
 
-## 2. SigLIP Prefix 路线
+## Grasp-Anything Direct 数据
 
-文件：
-
-```text
-siglip_embedding_wrapper.py
-demo_siglip_embedding.py
-```
-
-核心类：
-
-```python
-SigLIPPrefixInternVLWrapper
-```
-
-功能：
-
-按照 VCoTGrasp 的思路，不使用 `<image>` 文本占位机制，而是显式构造图像隐向量：
+原始数据保持不动：
 
 ```text
-image
-  -> PaliGemma2/SigLIP vision tower
-  -> image_projector: Linear(1152 -> 896)
-  -> image_embeds / sqrt(hidden_size)
-  -> concat(image_embeds, text_embeds)
-  -> InternVL/Qwen language_model.generate(inputs_embeds=...)
+../VCoT-Grasp-self/data/grasp_anything/lmdb/
 ```
 
-当前训练策略：
+GP 目录只保存轻量 manifest：
 
 ```text
-SigLIP 视觉塔：始终冻结
-image_projector：始终训练
-InternVL/Qwen language_model：默认冻结，可通过参数解冻
+data/vcot_grasp/direct/
+  train.jsonl
+  test_seen.jsonl
+  test_unseen.jsonl
+  internvl_meta_train.json
 ```
 
-注意：
+manifest 每行只保存 LMDB key 和目标名，不保存图片本体。
 
-`image_projector` 目前是新建的 `1152 -> 896` 线性层。它还没有训练，所以这条路线的推理结果不一定可靠。后续需要用 VCoTGrasp 数据训练 projector，必要时再解冻 Qwen/InternVL。
-
-运行示例：
+生成 manifest：
 
 ```bash
-cd /home/2025201095KZJ1/code/VCoTGrasp/GP/wrapper
-python demo_siglip_embedding.py
+cd /home/2025201095KZJ1/code/VCoTGrasp/GP
+conda run -n 260513-internvl python data_tools/prepare_grasp_anything_direct.py
 ```
 
-如果后续需要解冻语言模型：
+检查一条训练样本：
 
 ```bash
-python demo_siglip_embedding.py --train-language-model
+conda run -n 260513-internvl python data_tools/inspect_grasp_anything_direct.py \
+  --manifest data/vcot_grasp/direct/train.jsonl \
+  --index 0
 ```
 
-## 预训练权重
+输出 conversation 形如：
 
-### InternVL2.5-1B
+```json
+[
+  {
+    "from": "human",
+    "value": "<image>\ngrasp the remote"
+  },
+  {
+    "from": "gpt",
+    "value": "<loc0512><loc0662><loc0391><loc0107><loc0067>"
+  }
+]
+```
 
-默认路径：
+## 训练
+
+InternVL 训练代码已加入 direct LMDB 读取分支：
 
 ```text
-../InternVL/pretrained/OpenGVLab/InternVL2_5-1B
+InternVL/internvl_chat/internvl/train/vcot_direct_lmdb.py
+InternVL/internvl_chat/internvl/train/internvl_chat_finetune.py
 ```
 
-下载命令：
+训练入口：
 
 ```bash
-cd /home/2025201095KZJ1/code/VCoTGrasp/GP/InternVL
-huggingface-cli download OpenGVLab/InternVL2_5-1B \
-  --local-dir pretrained/OpenGVLab/InternVL2_5-1B \
-  --local-dir-use-symlinks False
+cd /home/2025201095KZJ1/code/VCoTGrasp/GP
+bash train_grasp_direct_lmdb_lora.sh
 ```
 
-### PaliGemma2/SigLIP Vision Tower
-
-默认路径：
-
-```text
-pretrained/paligemma2-3b-mix-224
-```
-
-这个目录内保存从 VCoTGrasp/PaliGemma2 搬运过来的 SigLIP 视觉塔权重。当前只使用其中的：
-
-```text
-vision_tower.*
-```
-
-不使用 PaliGemma2 的语言模型，也不直接复用它的 `multi_modal_projector`，因为 PaliGemma2 projector 是：
-
-```text
-1152 -> 2304
-```
-
-而 InternVL2.5-1B 的 Qwen hidden size 是：
-
-```text
-896
-```
-
-所以当前重新建立：
-
-```text
-1152 -> 896
-```
-
-的 projector。
-
-## 后续计划
-
-下一步建议在 `SigLIPPrefixInternVLWrapper` 基础上加入 VCoTGrasp 训练逻辑：
-
-```text
-image + "detect {obj_name}" -> bbox
-image/crop + "grasp the {obj_name}" -> grasp
-```
-
-但训练前需要先准备数据格式，并训练 `image_projector`，否则模型还不能稳定理解 SigLIP prefix 图像嵌入。
+这条路线不使用额外视觉编码器，也不使用 crop/bbox。它就是 direct grasp baseline。

@@ -1,1 +1,0 @@
-此处存放paligemma2-3b-mix-224预训练权重,用于拆出Siglip使用

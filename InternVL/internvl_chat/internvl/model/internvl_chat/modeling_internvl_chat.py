@@ -118,7 +118,7 @@ class InternVLChatModel(PreTrainedModel):
         self.vision_model = get_peft_model(self.vision_model, lora_config)
         self.vision_model.print_trainable_parameters()
 
-    def wrap_llm_lora(self, r=128, lora_alpha=256, lora_dropout=0.05):
+    def wrap_llm_lora(self, r=128, lora_alpha=256, lora_dropout=0.05, modules_to_save=None):
         # Determine the target modules based on the architecture of the language model
         if self.llm_arch_name == 'InternLM2ForCausalLM':
             target_modules = ['attention.wqkv', 'attention.wo', 'feed_forward.w1', 'feed_forward.w2', 'feed_forward.w3']
@@ -134,6 +134,7 @@ class InternVLChatModel(PreTrainedModel):
             target_modules=target_modules,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
+            modules_to_save=modules_to_save,
             task_type='CAUSAL_LM'
         )
         self.language_model = get_peft_model(self.language_model, lora_config)
@@ -170,11 +171,17 @@ class InternVLChatModel(PreTrainedModel):
         input_embeds = input_embeds.reshape(B * N, C)
 
         if torch.distributed.is_initialized() and torch.distributed.get_rank() == 0:
-            print(f'dynamic ViT batch size: {vit_batch_size}, images per sample: {vit_batch_size / B}, dynamic token length: {N}')
+            logger.info(
+                f'dynamic ViT batch size: {vit_batch_size}, images per sample: {vit_batch_size / B}, '
+                f'dynamic token length: {N}'
+            )
             if statistics is not None:
                 num_samples, num_padding_tokens, num_padding_images = statistics.tolist()
                 self.num_samples += num_samples
-                print(f'total_samples={self.num_samples}, {num_samples=}, {num_padding_tokens=}, {num_padding_images=}')
+                logger.info(
+                    f'total_samples={self.num_samples}, {num_samples=}, '
+                    f'{num_padding_tokens=}, {num_padding_images=}'
+                )
 
         input_ids = input_ids.reshape(B * N)
         selected = (input_ids == self.img_context_token_id)
