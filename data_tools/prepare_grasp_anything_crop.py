@@ -23,12 +23,19 @@ def parse_args():
     parser.add_argument("--splits", nargs="+", default=["train", "test_seen", "test_unseen"])
     parser.add_argument("--bbox-edge-expand", type=int, default=DEFAULT_BBOX_EDGE_EXPAND)
     parser.add_argument("--min-bbox-half-size", type=int, default=DEFAULT_MIN_BBOX_HALF_SIZE)
+    parser.add_argument("--target-coordinate-frame", choices=["full_image", "crop_image"], default="full_image")
     parser.add_argument("--target-grasp-index", type=int, default=0)
     parser.add_argument("--limit", type=int, default=None, help="Optional debug limit per split.")
     return parser.parse_args()
 
 
-def iter_split(csv_path: Path, bbox_edge_expand: int, min_bbox_half_size: int, target_grasp_index: int):
+def iter_split(
+    csv_path: Path,
+    bbox_edge_expand: int,
+    min_bbox_half_size: int,
+    target_coordinate_frame: str,
+    target_grasp_index: int,
+):
     with csv_path.open("r", encoding="utf-8", newline="") as f:
         reader = csv.reader(f)
         for row in reader:
@@ -48,6 +55,7 @@ def iter_split(csv_path: Path, bbox_edge_expand: int, min_bbox_half_size: int, t
                 "mask_key": f"{grasp_id}.npy",
                 "bbox_edge_expand": bbox_edge_expand,
                 "min_bbox_half_size": min_bbox_half_size,
+                "target_coordinate_frame": target_coordinate_frame,
                 "target_grasp_index": target_grasp_index,
             }
 
@@ -58,6 +66,7 @@ def write_split(
     split: str,
     bbox_edge_expand: int,
     min_bbox_half_size: int,
+    target_coordinate_frame: str,
     target_grasp_index: int,
     limit: int | None,
 ) -> int:
@@ -65,7 +74,13 @@ def write_split(
     csv_path = source_root / "origin_split" / f"{split}.csv"
     count = 0
     with output_path.open("w", encoding="utf-8") as f:
-        for item in iter_split(csv_path, bbox_edge_expand, min_bbox_half_size, target_grasp_index):
+        for item in iter_split(
+            csv_path,
+            bbox_edge_expand,
+            min_bbox_half_size,
+            target_coordinate_frame,
+            target_grasp_index,
+        ):
             item["source_root"] = str(source_root)
             item["split"] = split
             f.write(json.dumps(item, ensure_ascii=False) + "\n")
@@ -88,6 +103,7 @@ def main():
             split=split,
             bbox_edge_expand=args.bbox_edge_expand,
             min_bbox_half_size=args.min_bbox_half_size,
+            target_coordinate_frame=args.target_coordinate_frame,
             target_grasp_index=args.target_grasp_index,
             limit=args.limit,
         )
@@ -103,7 +119,7 @@ def main():
             "vcot_dataset": "grasp_anything_crop",
             "vcot_image_size": 416,
             "vcot_crop_source": "gt_mask_object_bbox",
-            "vcot_target_coordinate_frame": "full_image",
+            "vcot_target_coordinate_frame": args.target_coordinate_frame,
             "vcot_bbox_edge_expand": args.bbox_edge_expand,
             "vcot_min_bbox_half_size": args.min_bbox_half_size,
         }

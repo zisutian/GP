@@ -16,7 +16,15 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(INTERNVL_CHAT_ROOT))
 
 import torch
-from data_tools.vcot_crop_lmdb import build_crop_grasp_item
+from data_tools.vcot_crop_lmdb import (
+    DEFAULT_BBOX_EDGE_EXPAND,
+    DEFAULT_MIN_BBOX_HALF_SIZE,
+    TARGET_FRAME_CROP_IMAGE,
+    TARGET_FRAME_FULL_IMAGE,
+    build_crop_grasp_item,
+    transform_grasp_from_crop_norm,
+)
+from data_tools.vcot_direct_lmdb import _normalize_grasp
 from evaluate_direct_grasp import (
     VCOT_ANGLE_THRESHOLD,
     VCOT_IOU_THRESHOLD,
@@ -54,6 +62,13 @@ def parse_args():
     parser.add_argument("--max-new-tokens", type=int, default=32)
     parser.add_argument("--max-num", type=int, default=6)
     parser.add_argument("--vcot-image-size", type=int, default=416)
+    parser.add_argument("--bbox-edge-expand", type=int, default=DEFAULT_BBOX_EDGE_EXPAND)
+    parser.add_argument("--min-bbox-half-size", type=int, default=DEFAULT_MIN_BBOX_HALF_SIZE)
+    parser.add_argument(
+        "--target-coordinate-frame",
+        choices=[TARGET_FRAME_FULL_IMAGE, TARGET_FRAME_CROP_IMAGE],
+        default=TARGET_FRAME_FULL_IMAGE,
+    )
     parser.add_argument("--out-dir", default=str(REPO_ROOT / "result/vcot_grasp_crop"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--vcot-iou-threshold", type=float, default=VCOT_IOU_THRESHOLD)
@@ -68,6 +83,16 @@ def full_grasp_like_vcot(grasp: list[float]) -> list[float]:
     return [int(value) for value in grasp[:4]] + [float(grasp[4])]
 
 
+def full_grasp_to_norm(grasp: list[float], image_size: int = 416) -> list[float]:
+    return [
+        max(0.0, min(1.0, float(grasp[0]) / image_size)),
+        max(0.0, min(1.0, float(grasp[1]) / image_size)),
+        max(0.0, min(1.0, float(grasp[2]) / image_size)),
+        max(0.0, min(1.0, float(grasp[3]) / image_size)),
+        max(0.0, min(1.0, float(grasp[4]) / 180.0)),
+    ]
+
+
 class CropGraspDataset(Dataset):
     def __init__(
         self,
@@ -78,6 +103,9 @@ class CropGraspDataset(Dataset):
         dynamic_image_size: bool = True,
         use_thumbnail: bool = True,
         max_num: int = 6,
+        bbox_edge_expand: int = DEFAULT_BBOX_EDGE_EXPAND,
+        min_bbox_half_size: int = DEFAULT_MIN_BBOX_HALF_SIZE,
+        target_coordinate_frame: str = TARGET_FRAME_FULL_IMAGE,
         limit: int | None = None,
     ):
         self.records = []
@@ -92,6 +120,9 @@ class CropGraspDataset(Dataset):
         self.dynamic_image_size = dynamic_image_size
         self.use_thumbnail = use_thumbnail
         self.max_num = max_num
+        self.bbox_edge_expand = bbox_edge_expand
+        self.min_bbox_half_size = min_bbox_half_size
+        self.target_coordinate_frame = target_coordinate_frame
         self.transform = build_transform(is_train=False, input_size=image_size)
 
     def __len__(self):
@@ -99,7 +130,14 @@ class CropGraspDataset(Dataset):
 
     def __getitem__(self, idx):
         record = self.records[idx]
-        item = build_crop_grasp_item(record, image_size=self.vcot_image_size, include_all_grasps=True)
+        item = build_crop_grasp_item(
+            record,
+            image_size=self.vcot_image_size,
+            bbox_edge_expand=self.bbox_edge_expand,
+            min_bbox_half_size=self.min_bbox_half_size,
+            target_coordinate_frame=self.target_coordinate_frame,
+            include_all_grasps=True,
+        )
         source_images: list[Image.Image] = item["image"]
         patch_images = []
         num_patches = []
@@ -118,14 +156,17 @@ class CropGraspDataset(Dataset):
         if target is None:
             raise ValueError(f"Could not decode target loc tokens for record {idx}")
         question = self.prompt.format(obj_name=record["obj_name"])
+        full_target_norm = _normalize_grasp(item["target_grasp"], self.vcot_image_size)
         return {
             "pixel_values": pixel_values,
             "question": question,
             "num_patches": num_patches,
             "target": torch.tensor(target, dtype=torch.float32),
+            "full_target_norm": torch.tensor(full_target_norm, dtype=torch.float32),
             "target_labels": item["target_labels"],
             "crop_box": item["crop_box"],
             "target_grasp": item["target_grasp"],
+            "target_coordinate_frame": item["target_coordinate_frame"],
             "record": record,
         }
 
@@ -138,9 +179,11 @@ def collate_fn(batch):
         item["question"],
         item["num_patches"],
         item["target"],
+        item["full_target_norm"],
         item["target_labels"],
         item["crop_box"],
         item["target_grasp"],
+        item["target_coordinate_frame"],
         item["record"],
     )
 
@@ -248,6 +291,9 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
         dynamic_image_size=True,
         use_thumbnail=use_thumbnail,
         max_num=args.max_num,
+        bbox_edge_expand=args.bbox_edge_expand,
+        min_bbox_half_size=args.min_bbox_half_size,
+        target_coordinate_frame=args.target_coordinate_frame,
         limit=args.limit,
     )
     loader = DataLoader(
@@ -261,7 +307,18 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
     )
 
     outputs = []
-    for pixel_values, question, num_patches, target, target_labels, crop_box, target_grasp, record in tqdm(
+    for (
+        pixel_values,
+        question,
+        num_patches,
+        target,
+        full_target_norm,
+        target_labels,
+        crop_box,
+        target_grasp,
+        target_coordinate_frame,
+        record,
+    ) in tqdm(
         loader,
         disable=rank() != 0,
     ):
@@ -283,15 +340,26 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
             num_patches_list=num_patches,
         )
         pred = decode_loc_tokens(answer)
-        pred_full = denormalize_grasp(pred, args.vcot_image_size) if pred is not None else None
+        if pred is None:
+            pred_full = None
+            pred_full_norm = None
+        elif target_coordinate_frame == TARGET_FRAME_CROP_IMAGE:
+            pred_full = transform_grasp_from_crop_norm(pred, crop_box)
+            pred_full_norm = full_grasp_to_norm(pred_full, args.vcot_image_size)
+        else:
+            pred_full = denormalize_grasp(pred, args.vcot_image_size)
+            pred_full_norm = pred
         outputs.append({
             "answer": answer,
-            "pred_norm": pred,
+            "pred_norm": pred_full_norm,
+            "pred_model_norm": pred,
             "pred_full_grasp": pred_full,
-            "target_norm": target.tolist(),
+            "target_norm": full_target_norm.tolist(),
+            "target_model_norm": target.tolist(),
             "target_full_grasp": target_grasp,
             "target_labels": target_labels,
             "crop_box": crop_box,
+            "target_coordinate_frame": target_coordinate_frame,
             "grasp_id": record.get("grasp_id"),
             "obj_name": record.get("obj_name"),
             "split": record.get("split"),

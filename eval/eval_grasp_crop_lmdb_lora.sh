@@ -18,6 +18,11 @@ if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
 fi
 DATASETS="${DATASETS:-test_seen,test_unseen}"
 OUT_DIR="${OUT_DIR:-${GP_ROOT}/result/vcot_grasp_crop}"
+VCOT_IOU_THRESHOLD="${VCOT_IOU_THRESHOLD:-0.25}"
+VCOT_ANGLE_THRESHOLD="${VCOT_ANGLE_THRESHOLD:-30.0}"
+BBOX_EDGE_EXPAND="${BBOX_EDGE_EXPAND:-15}"
+MIN_BBOX_HALF_SIZE="${MIN_BBOX_HALF_SIZE:-50}"
+TARGET_COORDINATE_FRAME="${TARGET_COORDINATE_FRAME:-full_image}"
 
 torchrun \
   --nnodes=1 \
@@ -30,4 +35,9 @@ torchrun \
   --datasets "${DATASETS}" \
   --manifest-root "${GP_ROOT}" \
   --out-dir "${OUT_DIR}" \
+  --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
+  --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
+  --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
+  --vcot-iou-threshold "${VCOT_IOU_THRESHOLD}" \
+  --vcot-angle-threshold "${VCOT_ANGLE_THRESHOLD}" \
   "$@"

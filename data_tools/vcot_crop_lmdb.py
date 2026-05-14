@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from data_tools.vcot_direct_lmdb import (
+    _clamp,
     _get_lmdb_bytes,
     _load_grasps,
     _load_image,
@@ -18,6 +19,8 @@ from data_tools.vcot_direct_lmdb import (
 
 DEFAULT_BBOX_EDGE_EXPAND = 15
 DEFAULT_MIN_BBOX_HALF_SIZE = 50
+TARGET_FRAME_FULL_IMAGE = "full_image"
+TARGET_FRAME_CROP_IMAGE = "crop_image"
 
 
 def is_crop_grasp_record(data_item: dict[str, Any]) -> bool:
@@ -37,6 +40,7 @@ def build_crop_grasp_item(
     image_size: int = 416,
     bbox_edge_expand: int | None = None,
     min_bbox_half_size: int | None = None,
+    target_coordinate_frame: str | None = None,
     include_all_grasps: bool = False,
 ) -> dict[str, Any]:
     source_root = Path(record["source_root"])
@@ -69,7 +73,17 @@ def build_crop_grasp_item(
     )
     pil_crop_box = _scale_box_for_image(crop_box, label_image_size=image_size, image_size=full_image.size)
     crop_image = full_image.crop(tuple(pil_crop_box))
-    target_norm = _normalize_grasp(target_grasp, image_size)
+    target_coordinate_frame = (
+        target_coordinate_frame
+        if target_coordinate_frame is not None
+        else record.get("target_coordinate_frame", TARGET_FRAME_FULL_IMAGE)
+    )
+    if target_coordinate_frame == TARGET_FRAME_FULL_IMAGE:
+        target_norm = _normalize_grasp(target_grasp, image_size)
+    elif target_coordinate_frame == TARGET_FRAME_CROP_IMAGE:
+        target_norm = transform_grasp_to_crop_norm(target_grasp, crop_box)
+    else:
+        raise ValueError(f"Unsupported crop target coordinate frame: {target_coordinate_frame}")
     obj_name = record["obj_name"]
 
     meta = dict(record)
@@ -82,7 +96,7 @@ def build_crop_grasp_item(
         "min_bbox_half_size": min_bbox_half_size,
         "target_grasp_index": target_index,
         "target_grasp": target_grasp,
-        "target_coordinate_frame": "full_image",
+        "target_coordinate_frame": target_coordinate_frame,
     })
     item = {
         "image": [full_image, crop_image],
@@ -95,6 +109,7 @@ def build_crop_grasp_item(
         "object_bbox": object_bbox,
         "target_grasp": target_grasp,
         "target_norm": target_norm,
+        "target_coordinate_frame": target_coordinate_frame,
     }
     if include_all_grasps:
         item["target_labels"] = grasps
@@ -110,6 +125,40 @@ def mask_to_bbox_position(mask: np.ndarray) -> list[int] | None:
     y_min, y_max = np.where(rows)[0][[0, -1]]
     x_min, x_max = np.where(cols)[0][[0, -1]]
     return [int(x_min), int(y_min), int(x_max), int(y_max)]
+
+
+def transform_grasp_to_crop_norm(
+    grasp: list[float] | tuple[float, float, float, float, float],
+    crop_box: list[int] | tuple[int, int, int, int],
+) -> list[float]:
+    x0, y0, x1, y1 = [float(value) for value in crop_box]
+    crop_w = max(1.0, x1 - x0)
+    crop_h = max(1.0, y1 - y0)
+    x, y, w, h, angle = [float(value) for value in grasp[:5]]
+    return [
+        _clamp((x - x0) / crop_w),
+        _clamp((y - y0) / crop_h),
+        _clamp(w / crop_w),
+        _clamp(h / crop_h),
+        _clamp(angle / 180.0),
+    ]
+
+
+def transform_grasp_from_crop_norm(
+    values: list[float] | tuple[float, float, float, float, float],
+    crop_box: list[int] | tuple[int, int, int, int],
+) -> list[float]:
+    x0, y0, x1, y1 = [float(value) for value in crop_box]
+    crop_w = max(1.0, x1 - x0)
+    crop_h = max(1.0, y1 - y0)
+    x, y, w, h, angle = [_clamp(value) for value in values[:5]]
+    return [
+        x0 + x * crop_w,
+        y0 + y * crop_h,
+        w * crop_w,
+        h * crop_h,
+        angle * 180.0,
+    ]
 
 
 def crop_box_from_bbox(

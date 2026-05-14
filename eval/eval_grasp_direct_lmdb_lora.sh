@@ -18,6 +18,8 @@ if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
 fi
 DATASETS="${DATASETS:-test_seen,test_unseen}"
 OUT_DIR="${OUT_DIR:-${GP_ROOT}/result/vcot_grasp_direct}"
+VCOT_IOU_THRESHOLD="${VCOT_IOU_THRESHOLD:-0.25}"
+VCOT_ANGLE_THRESHOLD="${VCOT_ANGLE_THRESHOLD:-30.0}"
 
 torchrun \
   --nnodes=1 \
@@ -30,4 +32,6 @@ torchrun \
   --datasets "${DATASETS}" \
   --manifest-root "${GP_ROOT}" \
   --out-dir "${OUT_DIR}" \
+  --vcot-iou-threshold "${VCOT_IOU_THRESHOLD}" \
+  --vcot-angle-threshold "${VCOT_ANGLE_THRESHOLD}" \
   "$@"
