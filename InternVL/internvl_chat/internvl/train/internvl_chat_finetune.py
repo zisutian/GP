@@ -52,6 +52,9 @@ from internvl.train.dataset import (ConcatDataset, TCSLoader,
                                     preprocess_internvl2_5, preprocess_mpt,
                                     preprocess_phi3)
 from internvl.train.dataset_packed import PackedDataset, packed_collate_fn
+from data_tools.vcot_crop_lmdb import (build_crop_grasp_item,
+                                       crop_grasp_conversation_preview,
+                                       is_crop_grasp_record)
 from data_tools.vcot_direct_lmdb import (build_direct_grasp_item,
                                          direct_grasp_conversation_preview,
                                          is_direct_grasp_record)
@@ -353,6 +356,8 @@ class LazySupervisedDataset(Dataset):
 
         self.root = meta['root']
         self.vcot_image_size = meta.get('vcot_image_size', 416)
+        self.vcot_bbox_edge_expand = meta.get('vcot_bbox_edge_expand', 15)
+        self.vcot_min_bbox_half_size = meta.get('vcot_min_bbox_half_size', 50)
         self.cached_data_dict = {}
         self.tcs_loader = tcs_loader
         self.group_by_length = group_by_length
@@ -374,17 +379,24 @@ class LazySupervisedDataset(Dataset):
                 else:
                     if is_direct_grasp_record(data_item):
                         data_item['conversations'] = direct_grasp_conversation_preview(data_item)
+                        image_token_length = num_image_token * (max_dynamic_patch + use_thumbnail)
+                    elif is_crop_grasp_record(data_item):
+                        data_item['conversations'] = crop_grasp_conversation_preview(data_item)
+                        image_token_length = num_image_token * 2 * (
+                            max(1, max_dynamic_patch // 2) + use_thumbnail)
+                    else:
+                        image_token_length = num_image_token * (max_dynamic_patch + use_thumbnail)
                     # Compute token length using the tokenizer
                     conversations = '\n'.join([temp['value'] for temp in data_item['conversations']])
                     str_length = len(conversations)
-                    if str_length not in self.conv2length:
+                    length_cache_key = (str_length, image_token_length)
+                    if length_cache_key not in self.conv2length:
                         token_length = tokenizer(
                             conversations, return_tensors='pt', padding=False, truncation=False,
                         ).input_ids.size(1)
-                        self.conv2length[str_length] = token_length + num_image_token * (
-                                    max_dynamic_patch + use_thumbnail)
+                        self.conv2length[length_cache_key] = token_length + image_token_length
                     else:
-                        token_length = self.conv2length[str_length]
+                        token_length = self.conv2length[length_cache_key]
                 self.length.append(token_length)
 
     def __len__(self):
@@ -487,11 +499,14 @@ class LazySupervisedDataset(Dataset):
 
         images, num_tiles = [], []
         num_image = len(data_item['image'])
-        for image_path in data_item['image']:
-            # Merge the image path
-            image_path = self.get_image_path(image_path)
-            # Load the image using tcs_loader if available, otherwise use PIL
-            image = self.load_image(image_path)
+        for image_item in data_item['image']:
+            if isinstance(image_item, Image.Image):
+                image = image_item
+            else:
+                # Merge the image path
+                image_path = self.get_image_path(image_item)
+                # Load the image using tcs_loader if available, otherwise use PIL
+                image = self.load_image(image_path)
             if self.dynamic_image_size:  # If dynamic image size is enabled, preprocess the image dynamically
                 image = dynamic_preprocess(image, min_num=self.min_dynamic_patch,
                                            max_num=max(1, self.max_dynamic_patch // num_image),
@@ -655,6 +670,13 @@ class LazySupervisedDataset(Dataset):
                 data_item = json.loads(self.raw_data[i])
                 if is_direct_grasp_record(data_item):
                     data_item = build_direct_grasp_item(data_item, image_size=self.vcot_image_size)
+                elif is_crop_grasp_record(data_item):
+                    data_item = build_crop_grasp_item(
+                        data_item,
+                        image_size=self.vcot_image_size,
+                        bbox_edge_expand=self.vcot_bbox_edge_expand,
+                        min_bbox_half_size=self.vcot_min_bbox_half_size,
+                    )
                 # conversations = data_item['conversations']
                 # check_conversations_repetition(conversations, repeat_threshold=0.4, ngram=10)
                 if 'image' in data_item and isinstance(data_item['image'], Image.Image):
@@ -677,7 +699,10 @@ class LazySupervisedDataset(Dataset):
                 data_item = json.loads(self.raw_data[i])
                 if 'image' in data_item:
                     if type(data_item['image']) == list:
-                        images = [self.root + item for item in data_item['image']]
+                        images = [
+                            '<PIL.Image>' if isinstance(item, Image.Image) else self.root + item
+                            for item in data_item['image']
+                        ]
                         print(f'Failed to load image: {images}, the dataset is: {self.ds_name}')
                     else:
                         if data_item['image'].startswith('s3://'):

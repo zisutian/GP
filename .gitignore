@@ -179,6 +179,7 @@ results/
 .codex
 .agents
 data
+info
 result
 InternVL/pretrained
 InternVL/internvl_chat/work_dirs
