@@ -4,7 +4,7 @@ set -euo pipefail
 GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${GP_ROOT}/InternVL/internvl_chat"
 
-LOGDIR="${LOGDIR:-work_dirs/internvl_chat_v2_5/internvl2_5_1b_grasp_direct_lmdb_lora/runs}"
+LOGDIR="${LOGDIR:-work_dirs/internvl_chat_v2_5/grasp_direct_hparams}"
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-6006}"
 
