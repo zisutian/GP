@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import io
 import json
+import sys
 from pathlib import Path
 
 import cv2
@@ -11,7 +13,11 @@ import torch
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+EVAL_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(EVAL_ROOT))
+
 DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
+DEFAULT_MASK_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/mask").resolve()
 IMAGE_SIZE = 416
 
 
@@ -22,6 +28,20 @@ def parse_args():
     parser.add_argument("--iou-threshold", type=float, default=0.25)
     parser.add_argument("--angle-threshold", type=float, default=30.0)
     parser.add_argument("--write", action="store_true", help="Write the VCoTGrasp metrics back into each JSON summary.")
+    parser.add_argument("--out-dir", default=None, help="Write rescored JSON copies under this directory.")
+    parser.add_argument(
+        "--relative-root",
+        default=str(REPO_ROOT),
+        help="Root used to preserve relative paths under --out-dir.",
+    )
+    parser.add_argument("--summary-csv", default=None, help="Optional path for a CSV metrics summary.")
+    parser.add_argument(
+        "--analysis-out-dir",
+        default=None,
+        help="Optional directory for enhanced analysis CSVs.",
+    )
+    parser.add_argument("--mask-lmdb", default=str(DEFAULT_MASK_LMDB), help="Mask LMDB for crop quality analysis.")
+    parser.add_argument("--image-size", type=int, default=IMAGE_SIZE)
     return parser.parse_args()
 
 
@@ -49,14 +69,21 @@ def rotated_rect_iou(grasp1: list[float], grasp2: list[float]) -> float:
 def is_success(pred: list[float], labels: list[list[float]], iou_threshold: float, angle_threshold: float):
     best_iou = 0.0
     best_angle_diff = 180.0
+    best_joint_iou = 0.0
+    best_joint_angle_diff = 180.0
     for label in labels:
         iou = rotated_rect_iou(pred, label)
         angle_diff = angle_diff_180(pred[4], label[4])
-        best_iou = max(best_iou, iou)
-        best_angle_diff = min(best_angle_diff, angle_diff)
+        if iou > best_iou:
+            best_iou = iou
+        if angle_diff < best_angle_diff:
+            best_angle_diff = angle_diff
+        if iou > best_joint_iou:
+            best_joint_iou = iou
+            best_joint_angle_diff = angle_diff
         if iou >= iou_threshold and angle_diff <= angle_threshold:
             return True, iou, angle_diff, best_iou, best_angle_diff
-    return False, best_iou, best_angle_diff, best_iou, best_angle_diff
+    return False, best_joint_iou, best_joint_angle_diff, best_iou, best_angle_diff
 
 
 def load_labels(txn, grasp_id: str):
@@ -65,6 +92,19 @@ def load_labels(txn, grasp_id: str):
         raise FileNotFoundError(f"LMDB key not found: {grasp_id}.pt")
     labels = torch.load(io.BytesIO(value), map_location="cpu", weights_only=False)
     return [[float(value) for value in row[1:]] for row in labels]
+
+
+def output_path_for(path: Path, args) -> Path:
+    out_dir = Path(args.out_dir)
+    try:
+        relative = path.resolve().relative_to(Path(args.relative_root).resolve())
+    except ValueError:
+        relative = Path(path.name)
+
+    parts = list(relative.parts)
+    if "result" in parts:
+        relative = Path(*parts[parts.index("result") + 1 :])
+    return out_dir / relative
 
 
 def score_file(path: Path, env, args):
@@ -132,13 +172,50 @@ def score_file(path: Path, env, args):
         "vcot_best_angle_diff_mean": sum(best_angle_diffs) / len(best_angle_diffs) if best_angle_diffs else 0.0,
     }
     data.setdefault("summary", {}).update(metrics)
-    if args.write:
+    written_path = None
+    if args.out_dir:
+        written_path = output_path_for(path, args)
+        written_path.parent.mkdir(parents=True, exist_ok=True)
+        written_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    elif args.write:
         path.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    return total, len(valid), metrics
+        written_path = path
+    return total, len(valid), metrics, written_path
+
+
+def write_summary_csv(rows: list[dict], path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "result_path",
+        "output_path",
+        "total",
+        "valid",
+        "vcot_iou_threshold",
+        "vcot_angle_threshold",
+        "vcot_success",
+        "vcot_success_rate_all",
+        "vcot_success_rate_valid",
+        "vcot_top1_success",
+        "vcot_top1_success_rate_all",
+        "vcot_top1_success_rate_valid",
+        "target_label_count_mean",
+        "target_label_count_max",
+        "vcot_joint_iou_mean",
+        "vcot_joint_angle_diff_mean",
+        "vcot_best_iou_mean",
+        "vcot_best_angle_diff_mean",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
 def main():
     args = parse_args()
+    if args.write and args.out_dir:
+        raise ValueError("Use either --write for in-place updates or --out-dir for separate copies, not both.")
     env = lmdb.open(
         str(Path(args.grasp_lmdb)),
         readonly=True,
@@ -147,9 +224,19 @@ def main():
         meminit=False,
         max_readers=2048,
     )
+    summary_rows = []
+    analysis_paths = []
     for result in args.results:
         path = Path(result)
-        total, valid, metrics = score_file(path, env, args)
+        total, valid, metrics, written_path = score_file(path, env, args)
+        analysis_paths.append(written_path if written_path else path)
+        summary_rows.append({
+            "result_path": str(path),
+            "output_path": str(written_path) if written_path else "",
+            "total": total,
+            "valid": valid,
+            **metrics,
+        })
         print(path)
         print(f"  total={total} valid={valid}")
         print(f"  vcot_success={metrics['vcot_success']}")
@@ -159,6 +246,30 @@ def main():
         print(f"  target_label_count_mean={metrics['target_label_count_mean']:.2f}")
         print(f"  vcot_joint_iou_mean={metrics['vcot_joint_iou_mean']:.4f}")
         print(f"  vcot_joint_angle_diff_mean={metrics['vcot_joint_angle_diff_mean']:.4f}")
+        if written_path:
+            print(f"  saved={written_path}")
+
+    summary_csv = Path(args.summary_csv) if args.summary_csv else None
+    if summary_csv is None and args.out_dir:
+        summary_csv = Path(args.out_dir) / "summary.csv"
+    if summary_csv is not None:
+        write_summary_csv(summary_rows, summary_csv)
+        print(f"summary_csv={summary_csv}")
+
+    if args.analysis_out_dir:
+        env.close()
+        from analyze_grasp_results import run_analysis
+
+        print(f"analysis_out_dir={args.analysis_out_dir}")
+        run_analysis(
+            results=analysis_paths,
+            out_dir=args.analysis_out_dir,
+            grasp_lmdb=args.grasp_lmdb,
+            mask_lmdb=args.mask_lmdb,
+            iou_threshold=args.iou_threshold,
+            angle_threshold=args.angle_threshold,
+            image_size=args.image_size,
+        )
 
 
 if __name__ == "__main__":

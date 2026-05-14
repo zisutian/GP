@@ -52,6 +52,8 @@ from internvl.train.dataset import (ConcatDataset, TCSLoader,
                                     preprocess_internvl2_5, preprocess_mpt,
                                     preprocess_phi3)
 from internvl.train.dataset_packed import PackedDataset, packed_collate_fn
+from data_tools.vcot_bbox_lmdb import (bbox_conversation_preview,
+                                       build_bbox_item, is_bbox_record)
 from data_tools.vcot_crop_lmdb import (build_crop_grasp_item,
                                        crop_grasp_conversation_preview,
                                        is_crop_grasp_record)
@@ -358,6 +360,7 @@ class LazySupervisedDataset(Dataset):
         self.vcot_image_size = meta.get('vcot_image_size', 416)
         self.vcot_bbox_edge_expand = meta.get('vcot_bbox_edge_expand', 15)
         self.vcot_min_bbox_half_size = meta.get('vcot_min_bbox_half_size', 50)
+        self.vcot_target_coordinate_frame = meta.get('vcot_target_coordinate_frame', 'full_image')
         self.cached_data_dict = {}
         self.tcs_loader = tcs_loader
         self.group_by_length = group_by_length
@@ -379,6 +382,9 @@ class LazySupervisedDataset(Dataset):
                 else:
                     if is_direct_grasp_record(data_item):
                         data_item['conversations'] = direct_grasp_conversation_preview(data_item)
+                        image_token_length = num_image_token * (max_dynamic_patch + use_thumbnail)
+                    elif is_bbox_record(data_item):
+                        data_item['conversations'] = bbox_conversation_preview(data_item)
                         image_token_length = num_image_token * (max_dynamic_patch + use_thumbnail)
                     elif is_crop_grasp_record(data_item):
                         data_item['conversations'] = crop_grasp_conversation_preview(data_item)
@@ -670,12 +676,15 @@ class LazySupervisedDataset(Dataset):
                 data_item = json.loads(self.raw_data[i])
                 if is_direct_grasp_record(data_item):
                     data_item = build_direct_grasp_item(data_item, image_size=self.vcot_image_size)
+                elif is_bbox_record(data_item):
+                    data_item = build_bbox_item(data_item, image_size=self.vcot_image_size)
                 elif is_crop_grasp_record(data_item):
                     data_item = build_crop_grasp_item(
                         data_item,
                         image_size=self.vcot_image_size,
                         bbox_edge_expand=self.vcot_bbox_edge_expand,
                         min_bbox_half_size=self.vcot_min_bbox_half_size,
+                        target_coordinate_frame=self.vcot_target_coordinate_frame,
                     )
                 # conversations = data_item['conversations']
                 # check_conversations_repetition(conversations, repeat_threshold=0.4, ngram=10)
