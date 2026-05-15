@@ -15,8 +15,8 @@ from collect_checkpoint_manifest import infer as infer_checkpoint_manifest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EVAL_ROOT = Path(__file__).resolve().parent
-sys.path.insert(0, str(EVAL_ROOT))
+ANALYSIS_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ANALYSIS_ROOT))
 
 DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
 DEFAULT_MASK_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/mask").resolve()

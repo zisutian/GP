@@ -4,7 +4,7 @@ set -euo pipefail
 GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${GP_ROOT}/scripts/grasp_run_common.sh"
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-2,3}"
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 GPUS="${GPUS:-2}"
 BATCH_SIZE="${BATCH_SIZE:-16}"
 PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
@@ -37,7 +37,7 @@ prepare_meta() {
   "${PYTHON_BIN}" "${GP_ROOT}/scripts/ensure_grasp_data.py" crop \
     --meta-path "${meta_path}" \
     --output-root "${meta_root}" \
-    --splits train \
+    --splits train test_seen test_unseen \
     --bbox-edge-expand "${edge_expand}" \
     --min-bbox-half-size "${min_half}" \
     --target-coordinate-frame "${target_frame}" \
@@ -83,7 +83,7 @@ run_experiment() {
 
   action="$(training_action "${work_dir}" "${overwrite_output_dir}")"
   if [[ "${action}" == "skip" ]]; then
-    echo "Skip training: existing checkpoint/model found in ${work_dir}"
+    echo "Skip training: existing checkpoint found in ${work_dir}"
   else
     if [[ "${action}" == "overwrite" ]]; then
       echo "Incomplete output directory found; rerunning with overwrite enabled: ${work_dir}"
@@ -129,6 +129,7 @@ run_experiment() {
     fi
     WORK_DIR="${work_dir}" \
     OUT_DIR="${out_dir}" \
+    DATASET_ROOT="${GP_ROOT}/data/vcot_grasp/crop_hparams/${name}" \
     GPUS=1 \
     DATASETS="${eval_datasets}" \
     bash "${GP_ROOT}/eval/eval_grasp_crop_lmdb_lora.sh" \

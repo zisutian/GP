@@ -42,7 +42,7 @@ echo "Enhanced analysis dir: ${ANALYSIS_DIR}"
 echo "Checkpoint manifest: ${CHECKPOINT_CSV}"
 
 ARGS=(
-  eval/score_vcot_grasp_results.py
+  analysis/score_vcot_grasp_results.py
   --summary-csv "${SUMMARY_CSV}"
   --analysis-out-dir "${ANALYSIS_DIR}"
 )
@@ -50,6 +50,6 @@ ARGS+=("${RESULT_FILES[@]}")
 
 python "${ARGS[@]}"
 
-python eval/collect_checkpoint_manifest.py \
+python analysis/collect_checkpoint_manifest.py \
   --out "${CHECKPOINT_CSV}" \
   "${RESULT_FILES[@]}"
