@@ -63,7 +63,7 @@ python "${GP_ROOT}/scripts/grasp_config.py" write \
 echo "Direct config: ${VCOT_CONFIG_PATH}"
 
 if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
-  if ! { [ -f "${OUTPUT_DIR}/model.safetensors" ] || find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; }; then
+  if ! find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; then
     OVERWRITE_OUTPUT_DIR=True
   fi
 fi

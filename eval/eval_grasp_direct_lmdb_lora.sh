@@ -19,7 +19,7 @@ if [[ -z "${WORK_DIR:-}" ]]; then
   WORK_DIR="${GP_ROOT}/InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_direct_hparams/${EXPERIMENT_NAME}"
 fi
 if [[ -z "${CHECKPOINT:-}" ]]; then
-  CHECKPOINT="$(find "${WORK_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' | sort -V | tail -n 1)"
+  CHECKPOINT="$(latest_checkpoint "${WORK_DIR}")"
 fi
 if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
   echo "No checkpoint found. Set CHECKPOINT=/path/to/checkpoint-* or WORK_DIR=/path/to/work_dir." >&2

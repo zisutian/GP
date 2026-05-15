@@ -13,25 +13,21 @@ OVERWRITE_EVAL_RESULTS="${OVERWRITE_EVAL_RESULTS:-False}"
 EVAL_DATASETS="${EVAL_DATASETS:-test_seen,test_unseen}"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 
-USE_LLM_LORA="${USE_LLM_LORA:-16}"
-LEARNING_RATE="${LEARNING_RATE:-8e-5}"
-NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-1}"
-BBOX_RATIO="${BBOX_RATIO:-0.5}"
-TARGET_GRASP_INDEX="${TARGET_GRASP_INDEX:-0}"
-FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-448}"
+USE_LLM_LORA=16
+LEARNING_RATE="8e-5"
+NUM_TRAIN_EPOCHS=1
+TARGET_GRASP_INDEX=0
+FORCE_IMAGE_SIZE=448
 TRAIN_SCRIPT="${GP_ROOT}/InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/internvl2_5_1b_grasp_vcot_lmdb_lora.sh"
-TARGET_GRASP_TAG=""
-if [[ "${TARGET_GRASP_INDEX}" != "0" ]]; then
-  TARGET_GRASP_TAG="_g${TARGET_GRASP_INDEX}"
-fi
 
 export CUDA_VISIBLE_DEVICES
 
 prepare_meta() {
   local name="$1"
-  local edge_expand="$2"
-  local min_half="$3"
-  local target_frame="$4"
+  local bbox_ratio="$2"
+  local edge_expand="$3"
+  local min_half="$4"
+  local target_frame="$5"
   local meta_root="${GP_ROOT}/data/vcot_grasp/vcot_hparams/${name}"
   local crop_root="${meta_root}/crop"
   local meta_path="${meta_root}/internvl_meta_train.json"
@@ -41,7 +37,7 @@ prepare_meta() {
     --output-root "${meta_root}" \
     --crop-root "${crop_root}" \
     --bbox-root "${GP_ROOT}/data/vcot_grasp/bbox" \
-    --bbox-ratio "${BBOX_RATIO}" \
+    --bbox-ratio "${bbox_ratio}" \
     --bbox-edge-expand "${edge_expand}" \
     --min-bbox-half-size "${min_half}" \
     --target-coordinate-frame "${target_frame}" \
@@ -51,12 +47,13 @@ prepare_meta() {
 
 write_config() {
   local name="$1"
-  local edge_expand="$2"
-  local min_half="$3"
-  local target_frame="$4"
-  local max_dynamic_patch="$5"
-  local meta_path="$6"
-  local work_dir="$7"
+  local bbox_ratio="$2"
+  local edge_expand="$3"
+  local min_half="$4"
+  local target_frame="$5"
+  local max_dynamic_patch="$6"
+  local meta_path="$7"
+  local work_dir="$8"
   local crop_root="${GP_ROOT}/data/vcot_grasp/vcot_hparams/${name}/crop"
 
   "${PYTHON_BIN}" "${GP_ROOT}/scripts/grasp_config.py" write \
@@ -71,7 +68,7 @@ write_config() {
     --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
     --max-dynamic-patch "${max_dynamic_patch}" \
     --force-image-size "${FORCE_IMAGE_SIZE}" \
-    --bbox-ratio "${BBOX_RATIO}" \
+    --bbox-ratio "${bbox_ratio}" \
     --bbox-edge-expand "${edge_expand}" \
     --min-bbox-half-size "${min_half}" \
     --target-coordinate-frame "${target_frame}" \
@@ -81,10 +78,11 @@ write_config() {
 
 run_experiment() {
   local name="$1"
-  local edge_expand="$2"
-  local min_half="$3"
-  local target_frame="$4"
-  local max_dynamic_patch="$5"
+  local bbox_ratio="$2"
+  local edge_expand="$3"
+  local min_half="$4"
+  local target_frame="$5"
+  local max_dynamic_patch="$6"
   local crop_root="${GP_ROOT}/data/vcot_grasp/vcot_hparams/${name}/crop"
   local work_dir="${GP_ROOT}/InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_vcot_hparams/${name}"
   local out_dir="${GP_ROOT}/result/vcot_grasp_vcot/hparams/${name}"
@@ -95,11 +93,11 @@ run_experiment() {
   local action
 
   echo "===== ${name} ====="
-  meta_path="$(prepare_meta "${name}" "${edge_expand}" "${min_half}" "${target_frame}")"
+  meta_path="$(prepare_meta "${name}" "${bbox_ratio}" "${edge_expand}" "${min_half}" "${target_frame}")"
 
   action="$(training_action "${work_dir}" "${overwrite_output_dir}")"
   if [[ "${action}" == "skip" ]]; then
-    echo "Skip training: existing checkpoint/model found in ${work_dir}"
+    echo "Skip training: existing checkpoint found in ${work_dir}"
   else
     if [[ "${action}" == "overwrite" ]]; then
       echo "Incomplete output directory found; rerunning with overwrite enabled: ${work_dir}"
@@ -111,7 +109,7 @@ run_experiment() {
     LEARNING_RATE="${LEARNING_RATE}" \
     NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS}" \
     MAX_DYNAMIC_PATCH="${max_dynamic_patch}" \
-    BBOX_RATIO="${BBOX_RATIO}" \
+    BBOX_RATIO="${bbox_ratio}" \
     BBOX_EDGE_EXPAND="${edge_expand}" \
     MIN_BBOX_HALF_SIZE="${min_half}" \
     TARGET_COORDINATE_FRAME="${target_frame}" \
@@ -126,7 +124,7 @@ run_experiment() {
     bash "${TRAIN_SCRIPT}"
   fi
 
-  write_config "${name}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${meta_path}" "${work_dir}"
+  write_config "${name}" "${bbox_ratio}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${meta_path}" "${work_dir}"
 
   if should_run_eval; then
     if skip_eval_without_checkpoint "${work_dir}"; then
@@ -147,6 +145,7 @@ run_experiment() {
     fi
     WORK_DIR="${work_dir}" \
     OUT_DIR="${out_dir}" \
+    DATASET_ROOT="${GP_ROOT}/data/vcot_grasp/vcot_hparams/${name}" \
     GPUS=1 \
     DATASETS="${eval_datasets}" \
     bash "${GP_ROOT}/eval/eval_grasp_vcot_lmdb_lora.sh" \
@@ -154,5 +153,9 @@ run_experiment() {
   fi
 }
 
-run_experiment "vcot_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_bbox${BBOX_RATIO}${TARGET_GRASP_TAG}" 15 50 full_image 6
-run_experiment "vcot_frame_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_edge5_half40_bbox${BBOX_RATIO}${TARGET_GRASP_TAG}" 5 40 crop_image 6
+run_experiment "vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5" 0.5 5 40 crop_image 6
+run_experiment "vcot_frame_lora16_lr8e-5_ep1_patch6_edge10_half40_bbox0.5" 0.5 10 40 crop_image 6
+run_experiment "vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5" 0.5 10 40 crop_image 8
+run_experiment "vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.25" 0.25 15 50 full_image 6
+run_experiment "vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.5" 0.5 15 50 full_image 6
+run_experiment "vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox1.0" 1.0 15 50 full_image 6

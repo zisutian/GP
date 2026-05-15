@@ -52,7 +52,7 @@ internvl_meta_train.json:
 
 vcot_config.json:
   每个实验/checkpoint 的可回溯配置。
-  eval/rescore 依赖它确认 pipeline、meta_path、crop 参数、bbox_ratio 等。
+  eval/analysis 依赖它确认 pipeline、meta_path、crop 参数、bbox_ratio 等。
 ```
 
 `data/vcot_grasp` 里有三类目录，语义不同：
@@ -111,6 +111,8 @@ hparam manifests：
 ```text
 data/vcot_grasp/crop_hparams/{experiment}/
   train.jsonl
+  test_seen.jsonl
+  test_unseen.jsonl
   internvl_meta_train.json
 
 data/vcot_grasp/vcot_hparams/{experiment}/
@@ -120,7 +122,8 @@ data/vcot_grasp/vcot_hparams/{experiment}/
   internvl_meta_train.json
 ```
 
-crop/VCoT hparam 目录是实验私有的，用来避免不同 crop 设置共用同一个语义不清的 `train.jsonl`。
+crop/VCoT hparam 目录是实验私有的，用来避免不同 crop 设置共用同一个语义不清的
+`train.jsonl` 或 eval split manifest。sweep eval 会通过 `DATASET_ROOT` 指向这些私有目录。
 
 `scripts/ensure_grasp_data.py` 会在 train/eval 前检查 manifest/meta：
 
@@ -172,7 +175,7 @@ InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/
   internvl2_5_1b_grasp_vcot_lmdb_lora.sh
 ```
 
-评估与分析：
+模型推理评估：
 
 | 文件 | 作用 |
 | --- | --- |
@@ -182,10 +185,16 @@ InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/
 | `eval/evaluate_direct_grasp.py` | direct 推理评估 |
 | `eval/evaluate_crop_grasp.py` | oracle crop 推理评估 |
 | `eval/evaluate_vcot_grasp.py` | predicted bbox -> predicted crop -> grasp 推理评估 |
-| `eval/rescore_existing_grasp_results.sh` | 对已有 result JSON 统一重打分和分析 |
-| `eval/score_vcot_grasp_results.py` | result JSON 指标重算 |
-| `eval/collect_checkpoint_manifest.py` | 从 result/config 收集 checkpoint manifest |
-| `eval/analyze_grasp_results.py` | 输出 summary/error/sample/threshold/cross 分析 |
+
+结果分析：
+
+| 文件 | 作用 |
+| --- | --- |
+| `analysis/rescore_existing_grasp_results.sh` | 对已有 result JSON 统一重打分和分析 |
+| `analysis/score_vcot_grasp_results.py` | result JSON 指标重算 |
+| `analysis/collect_checkpoint_manifest.py` | 从 result/config 收集 checkpoint manifest |
+| `analysis/analyze_grasp_results.py` | 输出 summary/error/sample/threshold/cross 分析 |
+| `analysis/diagnose_crop_frame_prior.py` | 诊断 oracle crop 的 crop-frame 坐标先验 |
 
 ## Run
 
@@ -201,11 +210,33 @@ sweep 的行为：
 
 ```text
 1. ensure manifest/meta
-2. 检查 work_dir 是否已有 checkpoint/model
+2. 检查 work_dir 是否已有 checkpoint
 3. 缺 checkpoint 则训练
 4. 写/复制 vcot_config.json
 5. 检查 result 目录是否已有对应 split JSON
 6. 缺 result 则 eval
+7. 若本轮重新训练，则强制 eval，避免 stale result
+```
+
+当前 `run_grasp_vcot_design_sweep.sh` 固定为小范围 predicted 诊断搜索，不再大规模扫 LoRA/LR/epoch：
+
+```text
+LoRA r = 16
+lr = 8e-5
+epoch = 1
+target_grasp_index = 0
+force_image_size = 448
+```
+
+固定 checkpoint/result 目录名：
+
+```text
+vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.25
+vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.5
+vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox1.0
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge10_half40_bbox0.5
+vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5
 ```
 
 常用环境变量：
@@ -235,11 +266,20 @@ OUT_DIR=result/custom_eval \
 conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_vcot_lmdb_lora.sh
 ```
 
+单独评估 crop/VCoT hparam checkpoint 时，建议同时传对应实验的私有 manifest 根目录：
+
+```bash
+WORK_DIR=InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_vcot_hparams/{experiment} \
+DATASET_ROOT=data/vcot_grasp/vcot_hparams/{experiment} \
+OUT_DIR=result/vcot_grasp_vcot/hparams/{experiment} \
+conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_vcot_lmdb_lora.sh
+```
+
 统一 rescore/analysis：
 
 ```bash
 conda run --no-capture-output -n 260513-internvl \
-  bash eval/rescore_existing_grasp_results.sh
+  bash analysis/rescore_existing_grasp_results.sh
 ```
 
 输出目录：
@@ -305,10 +345,6 @@ unseen top1:     49.97
 predicted VCoT 示例：
 
 ```text
-vcot_lora16_lr8e-5_ep1_patch6_bbox0.5
-seen official:   71.97
-unseen official: 52.19
-
 vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.5
 seen official:   72.30
 unseen official: 54.47
@@ -320,12 +356,17 @@ unseen official: 54.47
 
 ```bash
 python -m py_compile scripts/ensure_grasp_data.py scripts/grasp_config.py \
+  analysis/analyze_grasp_results.py \
+  analysis/collect_checkpoint_manifest.py \
+  analysis/diagnose_crop_frame_prior.py \
+  analysis/score_vcot_grasp_results.py \
   data_tools/prepare_grasp_anything_direct.py \
   data_tools/prepare_grasp_anything_crop.py \
   data_tools/prepare_grasp_anything_bbox.py \
   data_tools/prepare_grasp_anything_vcot.py
 
 bash -n scripts/grasp_run_common.sh \
+  analysis/rescore_existing_grasp_results.sh \
   run_grasp_direct_hparam_sweep.sh \
   run_grasp_crop_design_sweep.sh \
   run_grasp_vcot_design_sweep.sh \

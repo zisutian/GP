@@ -30,7 +30,7 @@ DEFAULT_EXPERIMENT_NAME="crop_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNI
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-${DEFAULT_EXPERIMENT_NAME}}"
 WORK_DIR="${WORK_DIR:-${GP_ROOT}/InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_crop_hparams/${EXPERIMENT_NAME}}"
 if [[ -z "${CHECKPOINT:-}" ]]; then
-  CHECKPOINT="$(find "${WORK_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' | sort -V | tail -n 1)"
+  CHECKPOINT="$(latest_checkpoint "${WORK_DIR}")"
 fi
 if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
   echo "No checkpoint found. Set CHECKPOINT=/path/to/checkpoint-* or WORK_DIR=/path/to/work_dir." >&2
@@ -38,10 +38,11 @@ if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
 fi
 DATASETS="${DATASETS:-test_seen,test_unseen}"
 OUT_DIR="${OUT_DIR:-${GP_ROOT}/result/vcot_grasp_crop}"
+DATASET_ROOT="${DATASET_ROOT:-}"
 VCOT_IOU_THRESHOLD="${VCOT_IOU_THRESHOLD:-0.25}"
 VCOT_ANGLE_THRESHOLD="${VCOT_ANGLE_THRESHOLD:-30.0}"
 DEFAULT_DATASET_SPLITS="$(default_dataset_splits "${DATASETS}")"
-if [[ -n "${DEFAULT_DATASET_SPLITS}" ]]; then
+if [[ -n "${DEFAULT_DATASET_SPLITS}" && -z "${DATASET_ROOT}" ]]; then
   python "${GP_ROOT}/scripts/ensure_grasp_data.py" crop \
     --meta-path "${GP_ROOT}/data/vcot_grasp/crop/internvl_meta_train.json" \
     --splits train ${DEFAULT_DATASET_SPLITS} \
@@ -49,6 +50,9 @@ if [[ -n "${DEFAULT_DATASET_SPLITS}" ]]; then
     --min-bbox-half-size 50 \
     --target-coordinate-frame full_image \
     --target-grasp-index 0
+fi
+if [[ -n "${DATASET_ROOT}" ]]; then
+  require_dataset_root_splits "${DATASET_ROOT}" "${DATASETS}"
 fi
 EXTRA_EVAL_ARGS=()
 if [[ -n "${BBOX_EDGE_EXPAND:-}" ]]; then
@@ -65,6 +69,9 @@ if [[ -n "${TARGET_GRASP_INDEX:-}" ]]; then
 fi
 if [[ -n "${VCOT_CONFIG:-}" ]]; then
   EXTRA_EVAL_ARGS+=(--vcot-config "${VCOT_CONFIG}")
+fi
+if [[ -n "${DATASET_ROOT}" ]]; then
+  EXTRA_EVAL_ARGS+=(--dataset-root "${DATASET_ROOT}")
 fi
 
 torchrun \

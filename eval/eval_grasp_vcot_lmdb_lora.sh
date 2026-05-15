@@ -25,17 +25,13 @@ else
   echo "Unsupported TARGET_COORDINATE_FRAME=${EXPERIMENT_TARGET_COORDINATE_FRAME}; expected full_image or crop_image." >&2
   exit 1
 fi
-if [[ "${EXPERIMENT_TARGET_COORDINATE_FRAME}" == "full_image" && "${EXPERIMENT_BBOX_EDGE_EXPAND}" == "15" && "${EXPERIMENT_MIN_BBOX_HALF_SIZE}" == "50" ]]; then
-  DEFAULT_EXPERIMENT_NAME="vcot_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_bbox${BBOX_RATIO}"
-else
-  DEFAULT_EXPERIMENT_NAME="vcot_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${EXPERIMENT_BBOX_EDGE_EXPAND}_half${EXPERIMENT_MIN_BBOX_HALF_SIZE}_bbox${BBOX_RATIO}"
-fi
+DEFAULT_EXPERIMENT_NAME="vcot_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${EXPERIMENT_BBOX_EDGE_EXPAND}_half${EXPERIMENT_MIN_BBOX_HALF_SIZE}_bbox${BBOX_RATIO}"
 EXPERIMENT_NAME="${EXPERIMENT_NAME:-${DEFAULT_EXPERIMENT_NAME}}"
 if [[ -z "${WORK_DIR:-}" ]]; then
   WORK_DIR="${GP_ROOT}/InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_vcot_hparams/${EXPERIMENT_NAME}"
 fi
 if [[ -z "${CHECKPOINT:-}" ]]; then
-  CHECKPOINT="$(find "${WORK_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' | sort -V | tail -n 1)"
+  CHECKPOINT="$(latest_checkpoint "${WORK_DIR}")"
 fi
 if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
   echo "No checkpoint found. Set CHECKPOINT=/path/to/checkpoint-* or WORK_DIR=/path/to/work_dir." >&2
@@ -43,10 +39,11 @@ if [[ -z "${CHECKPOINT}" || ! -d "${CHECKPOINT}" ]]; then
 fi
 DATASETS="${DATASETS:-test_seen,test_unseen}"
 OUT_DIR="${OUT_DIR:-${GP_ROOT}/result/vcot_grasp_vcot/hparams/${EXPERIMENT_NAME}}"
+DATASET_ROOT="${DATASET_ROOT:-}"
 VCOT_IOU_THRESHOLD="${VCOT_IOU_THRESHOLD:-0.25}"
 VCOT_ANGLE_THRESHOLD="${VCOT_ANGLE_THRESHOLD:-30.0}"
 DEFAULT_DATASET_SPLITS="$(default_dataset_splits "${DATASETS}")"
-if [[ -n "${DEFAULT_DATASET_SPLITS}" ]]; then
+if [[ -n "${DEFAULT_DATASET_SPLITS}" && -z "${DATASET_ROOT}" ]]; then
   python "${GP_ROOT}/scripts/ensure_grasp_data.py" vcot \
     --meta-path "${GP_ROOT}/data/vcot_grasp/vcot/internvl_meta_train.json" \
     --output-root "${GP_ROOT}/data/vcot_grasp/vcot" \
@@ -58,6 +55,9 @@ if [[ -n "${DEFAULT_DATASET_SPLITS}" ]]; then
     --min-bbox-half-size 50 \
     --target-coordinate-frame full_image \
     --target-grasp-index 0
+fi
+if [[ -n "${DATASET_ROOT}" ]]; then
+  require_dataset_root_splits "${DATASET_ROOT}" "${DATASETS}"
 fi
 EXTRA_EVAL_ARGS=()
 if [[ -n "${BBOX_EDGE_EXPAND:-}" ]]; then
@@ -74,6 +74,9 @@ if [[ -n "${TARGET_GRASP_INDEX:-}" ]]; then
 fi
 if [[ -n "${VCOT_CONFIG:-}" ]]; then
   EXTRA_EVAL_ARGS+=(--vcot-config "${VCOT_CONFIG}")
+fi
+if [[ -n "${DATASET_ROOT}" ]]; then
+  EXTRA_EVAL_ARGS+=(--dataset-root "${DATASET_ROOT}")
 fi
 
 torchrun \

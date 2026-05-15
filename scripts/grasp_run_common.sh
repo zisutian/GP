@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 
-has_training_artifact() {
+has_checkpoint_artifact() {
   local work_dir="$1"
-  [[ -f "${work_dir}/model.safetensors" ]] || \
-    find "${work_dir}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit 2>/dev/null | grep -q .
+  find "${work_dir}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit 2>/dev/null | grep -q .
 }
 
 latest_checkpoint() {
@@ -17,7 +16,7 @@ training_action() {
 
   if [[ "${overwrite_output_dir}" == "True" ]]; then
     echo "train"
-  elif has_training_artifact "${work_dir}"; then
+  elif has_checkpoint_artifact "${work_dir}"; then
     echo "skip"
   elif [[ -d "${work_dir}" ]]; then
     echo "overwrite"
@@ -37,7 +36,7 @@ should_run_eval() {
 
 skip_eval_without_checkpoint() {
   local work_dir="$1"
-  if has_training_artifact "${work_dir}"; then
+  if has_checkpoint_artifact "${work_dir}"; then
     return 1
   fi
   echo "Skip eval: no checkpoint found in ${work_dir}"
@@ -108,4 +107,19 @@ default_dataset_splits() {
   IFS=" "
   echo "${splits[*]}"
   IFS="${old_ifs}"
+}
+
+require_dataset_root_splits() {
+  local dataset_root="$1"
+  local datasets_csv="$2"
+  local splits
+  local split
+
+  splits="$(default_dataset_splits "${datasets_csv}")"
+  for split in ${splits}; do
+    if [[ ! -s "${dataset_root}/${split}.jsonl" ]]; then
+      echo "Missing dataset manifest: ${dataset_root}/${split}.jsonl" >&2
+      return 1
+    fi
+  done
 }

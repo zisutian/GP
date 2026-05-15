@@ -43,6 +43,11 @@ def parse_args():
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--datasets", default="test_seen,test_unseen")
     parser.add_argument("--manifest-root", default=".")
+    parser.add_argument(
+        "--dataset-root",
+        default=None,
+        help="Optional directory containing split manifests such as test_seen.jsonl.",
+    )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=1)
     parser.add_argument("--num-beams", type=int, default=1)
@@ -489,8 +494,15 @@ def main():
         print(f"image_size: {image_size}, use_thumbnail: {use_thumbnail}, max_num: {args.max_num}")
 
     root = Path(args.manifest_root)
+    dataset_root = Path(args.dataset_root) if args.dataset_root else None
     for dataset_name in args.datasets.split(","):
-        manifest = Path(DEFAULT_DATASETS.get(dataset_name, dataset_name))
+        dataset_name = dataset_name.strip()
+        if not dataset_name:
+            continue
+        if dataset_root is not None and dataset_name in DEFAULT_DATASETS:
+            manifest = dataset_root / f"{dataset_name}.jsonl"
+        else:
+            manifest = Path(DEFAULT_DATASETS.get(dataset_name, dataset_name))
         if not manifest.is_absolute():
             manifest = root / manifest
         evaluate_dataset(args, model, tokenizer, dataset_name, manifest, image_size, use_thumbnail)

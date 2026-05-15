@@ -40,11 +40,7 @@ else
   exit 1
 fi
 
-if [ "${TARGET_COORDINATE_FRAME}" = "full_image" ] && [ "${BBOX_EDGE_EXPAND}" = "15" ] && [ "${MIN_BBOX_HALF_SIZE}" = "50" ]; then
-  DEFAULT_EXPERIMENT_NAME="vcot_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_bbox${BBOX_RATIO}"
-else
-  DEFAULT_EXPERIMENT_NAME="vcot_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${BBOX_EDGE_EXPAND}_half${MIN_BBOX_HALF_SIZE}_bbox${BBOX_RATIO}"
-fi
+DEFAULT_EXPERIMENT_NAME="vcot_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${BBOX_EDGE_EXPAND}_half${MIN_BBOX_HALF_SIZE}_bbox${BBOX_RATIO}"
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DEFAULT_EXPERIMENT_NAME}}
 
 export PYTHONPATH="${GP_ROOT}:$(pwd):${PYTHONPATH:-}"
@@ -98,7 +94,7 @@ python "${GP_ROOT}/scripts/grasp_config.py" write \
 echo "VCoT config: ${VCOT_CONFIG_PATH}"
 
 if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
-  if ! { [ -f "${OUTPUT_DIR}/model.safetensors" ] || find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; }; then
+  if ! find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; then
     OVERWRITE_OUTPUT_DIR=True
   fi
 fi

@@ -64,7 +64,7 @@ run_experiment() {
   meta_path="$(prepare_meta)"
   action="$(training_action "${work_dir}" "${overwrite_output_dir}")"
   if [[ "${action}" == "skip" ]]; then
-    echo "Skip training: existing checkpoint/model found in ${work_dir}"
+    echo "Skip training: existing checkpoint found in ${work_dir}"
   else
     if [[ "${action}" == "overwrite" ]]; then
       echo "Incomplete output directory found; rerunning with overwrite enabled: ${work_dir}"
