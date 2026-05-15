@@ -357,10 +357,17 @@ class LazySupervisedDataset(Dataset):
             self.rng.shuffle(self.raw_data)
 
         self.root = meta['root']
+        self.vcot_dataset = meta.get('vcot_dataset')
         self.vcot_image_size = meta.get('vcot_image_size', 416)
-        self.vcot_bbox_edge_expand = meta.get('vcot_bbox_edge_expand', 15)
-        self.vcot_min_bbox_half_size = meta.get('vcot_min_bbox_half_size', 50)
-        self.vcot_target_coordinate_frame = meta.get('vcot_target_coordinate_frame', 'full_image')
+        self.vcot_bbox_edge_expand = None
+        self.vcot_min_bbox_half_size = None
+        self.vcot_target_coordinate_frame = None
+        self.vcot_target_grasp_index = None
+        if self.vcot_dataset == 'grasp_anything_crop':
+            self.vcot_bbox_edge_expand = meta['vcot_bbox_edge_expand']
+            self.vcot_min_bbox_half_size = meta['vcot_min_bbox_half_size']
+            self.vcot_target_coordinate_frame = meta['vcot_target_coordinate_frame']
+            self.vcot_target_grasp_index = meta['vcot_target_grasp_index']
         self.cached_data_dict = {}
         self.tcs_loader = tcs_loader
         self.group_by_length = group_by_length
@@ -685,6 +692,7 @@ class LazySupervisedDataset(Dataset):
                         bbox_edge_expand=self.vcot_bbox_edge_expand,
                         min_bbox_half_size=self.vcot_min_bbox_half_size,
                         target_coordinate_frame=self.vcot_target_coordinate_frame,
+                        target_grasp_index=self.vcot_target_grasp_index,
                     )
                 # conversations = data_item['conversations']
                 # check_conversations_repetition(conversations, repeat_threshold=0.4, ngram=10)

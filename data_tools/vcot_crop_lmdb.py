@@ -41,6 +41,7 @@ def build_crop_grasp_item(
     bbox_edge_expand: int | None = None,
     min_bbox_half_size: int | None = None,
     target_coordinate_frame: str | None = None,
+    target_grasp_index: int | None = None,
     include_all_grasps: bool = False,
 ) -> dict[str, Any]:
     source_root = Path(record["source_root"])
@@ -48,22 +49,18 @@ def build_crop_grasp_item(
 
     grasp_lmdb_path = source_root / "lmdb/grasp_label_positive"
     grasps = _load_grasps(grasp_lmdb_path, record["grasp_key"])
-    target_index = _target_grasp_index(record, len(grasps))
+    target_index = _target_grasp_index(record, len(grasps), target_grasp_index)
     target_grasp = grasps[target_index]
 
-    mask_key = record.get("mask_key", f"{record['grasp_id']}.npy")
+    mask_key = record["mask_key"]
     mask = _load_mask(source_root / "lmdb/mask", mask_key)
     object_bbox = mask_to_bbox_position(mask)
     if object_bbox is None:
         raise ValueError(f"Empty mask for record: {record.get('grasp_id')}")
 
-    bbox_edge_expand = int(
-        bbox_edge_expand if bbox_edge_expand is not None else record.get("bbox_edge_expand", DEFAULT_BBOX_EDGE_EXPAND)
-    )
+    bbox_edge_expand = int(bbox_edge_expand if bbox_edge_expand is not None else record["bbox_edge_expand"])
     min_bbox_half_size = int(
-        min_bbox_half_size
-        if min_bbox_half_size is not None
-        else record.get("min_bbox_half_size", DEFAULT_MIN_BBOX_HALF_SIZE)
+        min_bbox_half_size if min_bbox_half_size is not None else record["min_bbox_half_size"]
     )
     crop_box = crop_box_from_bbox(
         object_bbox,
@@ -76,7 +73,7 @@ def build_crop_grasp_item(
     target_coordinate_frame = (
         target_coordinate_frame
         if target_coordinate_frame is not None
-        else record.get("target_coordinate_frame", TARGET_FRAME_FULL_IMAGE)
+        else record["target_coordinate_frame"]
     )
     if target_coordinate_frame == TARGET_FRAME_FULL_IMAGE:
         target_norm = _normalize_grasp(target_grasp, image_size)
@@ -215,10 +212,10 @@ def _load_mask(lmdb_path: str | Path, key: str) -> np.ndarray:
     return np.load(io.BytesIO(mask_bytes))
 
 
-def _target_grasp_index(record: dict[str, Any], num_grasps: int) -> int:
+def _target_grasp_index(record: dict[str, Any], num_grasps: int, override_index: int | None = None) -> int:
     if num_grasps <= 0:
         raise ValueError(f"No positive grasp labels for record: {record.get('grasp_id')}")
-    index = int(record.get("target_grasp_index", 0))
+    index = int(override_index if override_index is not None else record["target_grasp_index"])
     return max(0, min(num_grasps - 1, index))
 
 

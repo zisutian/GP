@@ -9,11 +9,17 @@ LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
 GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
+cd "${GP_ROOT}/InternVL/internvl_chat"
+
 USE_LLM_LORA=${USE_LLM_LORA:-16}
 LEARNING_RATE=${LEARNING_RATE:-8e-5}
 NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-1}
 MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-6}
 BBOX_RATIO=${BBOX_RATIO:-0.5}
+BBOX_EDGE_EXPAND=${BBOX_EDGE_EXPAND:-15}
+MIN_BBOX_HALF_SIZE=${MIN_BBOX_HALF_SIZE:-50}
+TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME:-full_image}
+TARGET_GRASP_INDEX=${TARGET_GRASP_INDEX:-0}
 FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-448}
 SAVE_STRATEGY=${SAVE_STRATEGY:-epoch}
 SAVE_STEPS=${SAVE_STEPS:-200}
@@ -25,7 +31,20 @@ MAX_SEQ_LENGTH=${MAX_SEQ_LENGTH:-2048}
 DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-4}
 OVERWRITE_OUTPUT_DIR=${OVERWRITE_OUTPUT_DIR:-False}
 
-DEFAULT_EXPERIMENT_NAME="vcot_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_bbox${BBOX_RATIO}"
+if [ "${TARGET_COORDINATE_FRAME}" = "full_image" ]; then
+  TARGET_FRAME_TAG="full"
+elif [ "${TARGET_COORDINATE_FRAME}" = "crop_image" ]; then
+  TARGET_FRAME_TAG="frame"
+else
+  echo "Unsupported TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME}; expected full_image or crop_image." >&2
+  exit 1
+fi
+
+if [ "${TARGET_COORDINATE_FRAME}" = "full_image" ] && [ "${BBOX_EDGE_EXPAND}" = "15" ] && [ "${MIN_BBOX_HALF_SIZE}" = "50" ]; then
+  DEFAULT_EXPERIMENT_NAME="vcot_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_bbox${BBOX_RATIO}"
+else
+  DEFAULT_EXPERIMENT_NAME="vcot_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${BBOX_EDGE_EXPAND}_half${MIN_BBOX_HALF_SIZE}_bbox${BBOX_RATIO}"
+fi
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DEFAULT_EXPERIMENT_NAME}}
 
 export PYTHONPATH="${GP_ROOT}:$(pwd):${PYTHONPATH:-}"
@@ -35,24 +54,48 @@ export TRANSFORMERS_VERBOSITY=${TRANSFORMERS_VERBOSITY:-${LOG_LEVEL}}
 export LAUNCHER=pytorch
 
 MODEL_PATH=${MODEL_PATH:-"${GP_ROOT}/InternVL/pretrained/OpenGVLab/InternVL2_5-1B"}
-META_PATH=${META_PATH:-"${GP_ROOT}/data/vcot_grasp/vcot/internvl_meta_train.json"}
-CROP_ROOT=${CROP_ROOT:-"${GP_ROOT}/data/vcot_grasp/crop"}
+META_PATH=${META_PATH:-"${GP_ROOT}/data/vcot_grasp/vcot_hparams/${EXPERIMENT_NAME}/internvl_meta_train.json"}
+CROP_ROOT=${CROP_ROOT:-"${GP_ROOT}/data/vcot_grasp/vcot_hparams/${EXPERIMENT_NAME}/crop"}
 BBOX_ROOT=${BBOX_ROOT:-"${GP_ROOT}/data/vcot_grasp/bbox"}
 OUTPUT_ROOT=${OUTPUT_ROOT:-"work_dirs/internvl_chat_v2_5/grasp_vcot_hparams"}
 OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXPERIMENT_NAME}"}
 LOG_DIR=${LOG_DIR:-"${OUTPUT_DIR}/logs"}
 TRAINING_LOG_PATH=${TRAINING_LOG_PATH:-"${LOG_DIR}/train.log"}
 
-if [ ! -f "${META_PATH}" ]; then
-  echo "Missing VCoT-style meta file: ${META_PATH}; preparing joint crop+bbox meta."
-  python "${GP_ROOT}/data_tools/prepare_grasp_anything_vcot.py" \
-    --crop-root "${CROP_ROOT}" \
-    --bbox-root "${BBOX_ROOT}" \
-    --output-root "$(dirname "${META_PATH}")" \
-    --bbox-ratio "${BBOX_RATIO}"
-fi
+python "${GP_ROOT}/scripts/ensure_grasp_data.py" vcot \
+  --meta-path "${META_PATH}" \
+  --crop-root "${CROP_ROOT}" \
+  --bbox-root "${BBOX_ROOT}" \
+  --output-root "$(dirname "${META_PATH}")" \
+  --bbox-ratio "${BBOX_RATIO}" \
+  --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
+  --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
+  --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
+  --target-grasp-index "${TARGET_GRASP_INDEX}"
 
 mkdir -p "${LOG_DIR}"
+
+VCOT_CONFIG_PATH="${OUTPUT_DIR}/vcot_config.json"
+python "${GP_ROOT}/scripts/grasp_config.py" write \
+  --pipeline predicted_vcot \
+  --experiment-name "${EXPERIMENT_NAME}" \
+  --meta-path "${META_PATH}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --config-path "${VCOT_CONFIG_PATH}" \
+  --model-path "${MODEL_PATH}" \
+  --crop-root "${CROP_ROOT}" \
+  --bbox-root "${BBOX_ROOT}" \
+  --use-llm-lora "${USE_LLM_LORA}" \
+  --learning-rate "${LEARNING_RATE}" \
+  --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+  --max-dynamic-patch "${MAX_DYNAMIC_PATCH}" \
+  --force-image-size "${FORCE_IMAGE_SIZE}" \
+  --bbox-ratio "${BBOX_RATIO}" \
+  --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
+  --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
+  --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
+  --target-grasp-index "${TARGET_GRASP_INDEX}"
+echo "VCoT config: ${VCOT_CONFIG_PATH}"
 
 if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
   if ! { [ -f "${OUTPUT_DIR}/model.safetensors" ] || find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; }; then
@@ -109,3 +152,24 @@ torchrun \
   --deepspeed "zero_stage1_config.json" \
   --report_to "tensorboard" \
   2>&1 | tee -a "${TRAINING_LOG_PATH}"
+
+python "${GP_ROOT}/scripts/grasp_config.py" write \
+  --pipeline predicted_vcot \
+  --experiment-name "${EXPERIMENT_NAME}" \
+  --meta-path "${META_PATH}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --config-path "${VCOT_CONFIG_PATH}" \
+  --model-path "${MODEL_PATH}" \
+  --crop-root "${CROP_ROOT}" \
+  --bbox-root "${BBOX_ROOT}" \
+  --use-llm-lora "${USE_LLM_LORA}" \
+  --learning-rate "${LEARNING_RATE}" \
+  --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+  --max-dynamic-patch "${MAX_DYNAMIC_PATCH}" \
+  --force-image-size "${FORCE_IMAGE_SIZE}" \
+  --bbox-ratio "${BBOX_RATIO}" \
+  --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
+  --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
+  --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
+  --target-grasp-index "${TARGET_GRASP_INDEX}" \
+  --copy-to-checkpoints

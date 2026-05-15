@@ -11,6 +11,8 @@ import cv2
 import lmdb
 import torch
 
+from collect_checkpoint_manifest import infer as infer_checkpoint_manifest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVAL_ROOT = Path(__file__).resolve().parent
@@ -188,6 +190,15 @@ def write_summary_csv(rows: list[dict], path: Path):
     fieldnames = [
         "result_path",
         "output_path",
+        "method",
+        "experiment",
+        "evaluation_mode",
+        "checkpoint",
+        "loaded_vcot_config",
+        "target_coordinate_frame",
+        "bbox_edge_expand",
+        "min_bbox_half_size",
+        "target_grasp_index",
         "total",
         "valid",
         "vcot_iou_threshold",
@@ -228,11 +239,21 @@ def main():
     analysis_paths = []
     for result in args.results:
         path = Path(result)
+        manifest_info = infer_checkpoint_manifest(path)
         total, valid, metrics, written_path = score_file(path, env, args)
         analysis_paths.append(written_path if written_path else path)
         summary_rows.append({
             "result_path": str(path),
             "output_path": str(written_path) if written_path else "",
+            "method": manifest_info.get("method", ""),
+            "experiment": manifest_info.get("experiment", ""),
+            "evaluation_mode": manifest_info.get("evaluation_mode", ""),
+            "checkpoint": manifest_info.get("latest_checkpoint", ""),
+            "loaded_vcot_config": manifest_info.get("loaded_vcot_config", ""),
+            "target_coordinate_frame": manifest_info.get("target_coordinate_frame", ""),
+            "bbox_edge_expand": manifest_info.get("bbox_edge_expand", ""),
+            "min_bbox_half_size": manifest_info.get("min_bbox_half_size", ""),
+            "target_grasp_index": manifest_info.get("target_grasp_index", ""),
             "total": total,
             "valid": valid,
             **metrics,

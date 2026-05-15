@@ -9,12 +9,16 @@ LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
 GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
+cd "${GP_ROOT}/InternVL/internvl_chat"
+
 USE_LLM_LORA=${USE_LLM_LORA:-16}
 LEARNING_RATE=${LEARNING_RATE:-8e-5}
 NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-1}
 MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-6}
 BBOX_EDGE_EXPAND=${BBOX_EDGE_EXPAND:-15}
 MIN_BBOX_HALF_SIZE=${MIN_BBOX_HALF_SIZE:-50}
+TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME:-full_image}
+TARGET_GRASP_INDEX=${TARGET_GRASP_INDEX:-0}
 FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-448}
 SAVE_STRATEGY=${SAVE_STRATEGY:-epoch}
 SAVE_STEPS=${SAVE_STEPS:-200}
@@ -42,13 +46,29 @@ OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXPERIMENT_NAME}"}
 LOG_DIR=${LOG_DIR:-"${OUTPUT_DIR}/logs"}
 TRAINING_LOG_PATH=${TRAINING_LOG_PATH:-"${LOG_DIR}/train.log"}
 
-if [ ! -f "${META_PATH}" ]; then
-  echo "Missing crop meta file: ${META_PATH}" >&2
-  echo "Run: conda run -n 260513-internvl python data_tools/prepare_grasp_anything_crop.py" >&2
-  exit 1
-fi
+python "${GP_ROOT}/scripts/ensure_grasp_data.py" crop \
+  --meta-path "${META_PATH}" \
+  --splits train \
+  --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
+  --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
+  --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
+  --target-grasp-index "${TARGET_GRASP_INDEX}"
 
 mkdir -p "${LOG_DIR}"
+
+VCOT_CONFIG_PATH="${OUTPUT_DIR}/vcot_config.json"
+python "${GP_ROOT}/scripts/grasp_config.py" write \
+  --pipeline oracle_crop \
+  --experiment-name "${EXPERIMENT_NAME}" \
+  --meta-path "${META_PATH}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --config-path "${VCOT_CONFIG_PATH}" \
+  --use-llm-lora "${USE_LLM_LORA}" \
+  --learning-rate "${LEARNING_RATE}" \
+  --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+  --max-dynamic-patch "${MAX_DYNAMIC_PATCH}" \
+  --force-image-size "${FORCE_IMAGE_SIZE}"
+echo "Crop config: ${VCOT_CONFIG_PATH}"
 
 if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
   if ! { [ -f "${OUTPUT_DIR}/model.safetensors" ] || find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; }; then
@@ -105,3 +125,16 @@ torchrun \
   --deepspeed "zero_stage1_config.json" \
   --report_to "tensorboard" \
   2>&1 | tee -a "${TRAINING_LOG_PATH}"
+
+python "${GP_ROOT}/scripts/grasp_config.py" write \
+  --pipeline oracle_crop \
+  --experiment-name "${EXPERIMENT_NAME}" \
+  --meta-path "${META_PATH}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --config-path "${VCOT_CONFIG_PATH}" \
+  --use-llm-lora "${USE_LLM_LORA}" \
+  --learning-rate "${LEARNING_RATE}" \
+  --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+  --max-dynamic-patch "${MAX_DYNAMIC_PATCH}" \
+  --force-image-size "${FORCE_IMAGE_SIZE}" \
+  --copy-to-checkpoints

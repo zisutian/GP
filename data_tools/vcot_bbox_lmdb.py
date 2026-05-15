@@ -30,7 +30,7 @@ def bbox_conversation_preview(record: dict[str, Any]) -> list[dict[str, str]]:
 def build_bbox_item(record: dict[str, Any], image_size: int = 416) -> dict[str, Any]:
     source_root = Path(record["source_root"])
     image = _load_image(source_root / "lmdb/image", record["image_key"])
-    mask_key = record.get("mask_key", f"{record['grasp_id']}.npy")
+    mask_key = record["mask_key"]
     mask = _load_mask(source_root / "lmdb/mask", mask_key)
     bbox = mask_to_bbox_position(mask)
     if bbox is None:

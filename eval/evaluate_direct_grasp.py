@@ -48,7 +48,7 @@ def parse_args():
     parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=32)
-    parser.add_argument("--max-num", type=int, default=6)
+    parser.add_argument("--max-num", type=int, default=None)
     parser.add_argument("--out-dir", default=str(REPO_ROOT / "result/vcot_grasp_direct"))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--vcot-iou-threshold", type=float, default=VCOT_IOU_THRESHOLD)
@@ -89,6 +89,24 @@ def load_model_and_tokenizer(args):
     if not args.load_in_8bit and not args.load_in_4bit and not args.auto:
         model = model.cuda()
     return model, tokenizer
+
+
+def find_vcot_config(checkpoint: str | Path) -> Path:
+    checkpoint_path = Path(checkpoint).expanduser().resolve()
+    candidates = []
+    if checkpoint_path.is_dir():
+        candidates.append(checkpoint_path / "vcot_config.json")
+        candidates.append(checkpoint_path.parent / "vcot_config.json")
+    else:
+        candidates.append(checkpoint_path.parent / "vcot_config.json")
+        candidates.append(checkpoint_path.parent.parent / "vcot_config.json")
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        f"vcot_config.json not found for checkpoint {checkpoint_path}. "
+        "Expected it in the checkpoint directory or its parent."
+    )
 
 
 def decode_loc_tokens(text: str, bins: int = 1024) -> list[float] | None:
@@ -429,6 +447,11 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
             vcot_iou_threshold=args.vcot_iou_threshold,
             vcot_angle_threshold=args.vcot_angle_threshold,
         )
+        summary.update({
+            "evaluation_mode": "direct_grasp",
+            "checkpoint": args.checkpoint,
+            "loaded_vcot_config": args.loaded_vcot_config,
+        })
         for output in outputs:
             output.pop("target_labels", None)
         output_path.write_text(json.dumps({"summary": summary, "outputs": outputs}, indent=2), encoding="utf-8")
@@ -444,6 +467,11 @@ def main():
     args = parse_args()
     assert args.batch_size == 1, "Only batch size 1 is supported"
     args.checkpoint = str(Path(args.checkpoint).resolve())
+    config_path = find_vcot_config(args.checkpoint)
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    args.loaded_vcot_config = str(config_path)
+    if args.max_num is None:
+        args.max_num = int(config.get("max_dynamic_patch") or 6)
     if int(os.getenv("WORLD_SIZE", "1")) > 1:
         torch.distributed.init_process_group(
             backend="nccl",

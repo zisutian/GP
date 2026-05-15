@@ -122,6 +122,7 @@ def main():
             "vcot_target_coordinate_frame": args.target_coordinate_frame,
             "vcot_bbox_edge_expand": args.bbox_edge_expand,
             "vcot_min_bbox_half_size": args.min_bbox_half_size,
+            "vcot_target_grasp_index": args.target_grasp_index,
         }
     }
     meta_path = output_root / "internvl_meta_train.json"

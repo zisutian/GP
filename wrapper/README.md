@@ -25,8 +25,6 @@ wrapper/
 data_tools/
   prepare_grasp_anything_direct.py
   inspect_grasp_anything_direct.py
-
-train_grasp_direct_lmdb_lora.sh
 ```
 
 ## InternVL 原生推理
@@ -77,7 +75,7 @@ data/vcot_grasp/direct/
 
 manifest 每行只保存 LMDB key 和目标名，不保存图片本体。
 
-生成 manifest：
+生成 manifest；训练和评估入口也会在缺失时自动重建默认 manifest：
 
 ```bash
 cd /home/2025201095KZJ1/code/VCoTGrasp/GP
@@ -116,11 +114,11 @@ data_tools/vcot_direct_lmdb.py
 InternVL/internvl_chat/internvl/train/internvl_chat_finetune.py
 ```
 
-训练入口：
+推荐从 hparam sweep 启动训练：
 
 ```bash
 cd /home/2025201095KZJ1/code/VCoTGrasp/GP
-bash train_grasp_direct_lmdb_lora.sh
+bash run_grasp_direct_hparam_sweep.sh
 ```
 
-这条路线不使用额外视觉编码器，也不使用 crop/bbox。它就是 direct grasp baseline。
+底层脚本在 `InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/` 下；根目录不再保留额外的单次 train wrapper。这条路线不使用额外视觉编码器，也不使用 crop/bbox。它就是 direct grasp baseline。

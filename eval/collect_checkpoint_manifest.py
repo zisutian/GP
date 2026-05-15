@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 from pathlib import Path
+from typing import Any
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-WORK_ROOT = REPO_ROOT / "InternVL/internvl_chat/work_dirs/internvl_chat_v2_5"
+EVALUATION_MODE_TO_METHOD = {
+    "direct_grasp": "direct",
+    "oracle_crop": "oracle_crop",
+    "predicted_vcot": "pred_vcot",
+}
 
 
 def parse_args():
@@ -24,55 +29,66 @@ def split_name(path: Path) -> str:
     return "unknown"
 
 
-def latest_checkpoint(work_dir: Path) -> Path | None:
-    checkpoints = sorted(work_dir.glob("checkpoint-*"), key=lambda path: int(path.name.split("-")[-1]))
-    if checkpoints:
-        return checkpoints[-1]
-    if (work_dir / "model.safetensors").exists():
-        return work_dir
-    return None
+def load_json(path: Path) -> dict[str, Any]:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def csv_value(value: Any) -> str:
+    return "" if value is None else str(value)
+
+
+def config_work_dir(config_path: Path, config: dict[str, Any]) -> Path:
+    output_dir = config.get("output_dir")
+    if output_dir:
+        return Path(output_dir)
+    parent = config_path.parent
+    if parent.name.startswith("checkpoint-"):
+        return parent.parent
+    return parent
+
+
+def required_summary_value(summary: dict[str, Any], key: str, result_path: Path) -> Any:
+    value = summary.get(key)
+    if value in (None, ""):
+        raise ValueError(f"{result_path} is missing summary.{key}; rerun eval or migrate the result summary.")
+    return value
 
 
 def infer(path: Path) -> dict[str, str]:
-    parts = path.parts
-    method = "unknown"
-    experiment = path.parent.name
-    work_dir = ""
+    data = load_json(path)
+    summary = data.get("summary", {}) if isinstance(data.get("summary", {}), dict) else {}
 
-    if "vcot_grasp_direct" in parts:
-        method = "direct"
-        if "hparams" in parts:
-            experiment = parts[parts.index("hparams") + 1]
-            work_dir = str(WORK_ROOT / "grasp_direct_hparams" / experiment)
-        else:
-            experiment = "internvl2_5_1b_grasp_direct_lmdb_lora"
-            work_dir = str(WORK_ROOT / experiment)
-    elif "vcot_grasp_crop" in parts:
-        method = "oracle_crop"
-        if "hparams" in parts:
-            experiment = parts[parts.index("hparams") + 1]
-            work_dir = str(WORK_ROOT / "grasp_crop_hparams" / experiment)
-        else:
-            experiment = "crop_object_lora16_lr8e-5_ep1_patch6_edge15_half50"
-            work_dir = str(WORK_ROOT / "grasp_crop_hparams" / experiment)
-    elif "vcot_grasp_vcot" in parts:
-        method = "pred_vcot"
-        if "hparams" in parts:
-            experiment = parts[parts.index("hparams") + 1]
-        else:
-            experiment = "vcot_lora16_lr8e-5_ep1_patch6_bbox0.5"
-        work_dir = str(WORK_ROOT / "grasp_vcot_hparams" / experiment)
+    config_path = Path(str(required_summary_value(summary, "loaded_vcot_config", path)))
+    if not config_path.exists():
+        raise FileNotFoundError(f"Loaded vcot_config.json does not exist for {path}: {config_path}")
+    config = load_json(config_path)
 
-    work_path = Path(work_dir) if work_dir else Path()
-    checkpoint = latest_checkpoint(work_path) if work_dir else None
+    work_path = config_work_dir(config_path, config)
+    checkpoint = Path(str(required_summary_value(summary, "checkpoint", path)))
+    if not checkpoint.exists():
+        raise FileNotFoundError(f"Checkpoint does not exist for {path}: {checkpoint}")
+
+    evaluation_mode = str(required_summary_value(summary, "evaluation_mode", path))
+    if evaluation_mode not in EVALUATION_MODE_TO_METHOD:
+        raise ValueError(f"Unsupported evaluation_mode for {path}: {evaluation_mode}")
+    method = EVALUATION_MODE_TO_METHOD[evaluation_mode]
+    experiment = str(config["experiment_name"])
+
     return {
         "method": method,
         "experiment": experiment,
         "split": split_name(path),
         "result_path": str(path),
-        "work_dir": work_dir,
-        "latest_checkpoint": str(checkpoint) if checkpoint else "",
-        "checkpoint_exists": str(checkpoint is not None),
+        "evaluation_mode": evaluation_mode,
+        "target_coordinate_frame": csv_value(summary.get("target_coordinate_frame", config.get("target_coordinate_frame"))),
+        "bbox_edge_expand": csv_value(summary.get("bbox_edge_expand", config.get("bbox_edge_expand"))),
+        "min_bbox_half_size": csv_value(summary.get("min_bbox_half_size", config.get("min_bbox_half_size"))),
+        "target_grasp_index": csv_value(summary.get("target_grasp_index", config.get("target_grasp_index"))),
+        "work_dir": str(work_path),
+        "latest_checkpoint": str(checkpoint),
+        "checkpoint_exists": "True",
+        "loaded_vcot_config": str(config_path),
+        "config_exists": "True",
     }
 
 
@@ -86,9 +102,16 @@ def main():
         "experiment",
         "split",
         "result_path",
+        "evaluation_mode",
+        "target_coordinate_frame",
+        "bbox_edge_expand",
+        "min_bbox_half_size",
+        "target_grasp_index",
         "work_dir",
         "latest_checkpoint",
         "checkpoint_exists",
+        "loaded_vcot_config",
+        "config_exists",
     ]
     with out_path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)

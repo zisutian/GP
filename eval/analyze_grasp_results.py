@@ -13,6 +13,8 @@ import lmdb
 import numpy as np
 import torch
 
+from collect_checkpoint_manifest import infer as infer_checkpoint_manifest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
@@ -38,6 +40,12 @@ class ResultInfo:
     path: Path
     total: int
     parsed: int
+    evaluation_mode: str = ""
+    target_coordinate_frame: str = ""
+    bbox_edge_expand: str = ""
+    min_bbox_half_size: str = ""
+    target_grasp_index: str = ""
+    loaded_vcot_config: str = ""
 
 
 def parse_args():
@@ -125,30 +133,16 @@ def stats(values: list[float]) -> dict[str, float]:
     }
 
 
-def infer_info(path: Path, total: int, parsed: int) -> ResultInfo:
-    parts = path.parts
-    if "vcot_grasp_direct" in parts:
-        method = "direct"
-        if "hparams" in parts:
-            experiment = parts[parts.index("hparams") + 1]
-        else:
-            experiment = path.parent.name
-    elif "vcot_grasp_vcot" in parts:
-        method = "pred_vcot"
-        experiment = path.parent.name if path.parent.name != "vcot_grasp_vcot" else "predicted_bbox_crop"
-    elif "vcot_grasp_crop" in parts:
-        method = "oracle_crop"
-        experiment = path.parent.name if path.parent.name != "vcot_grasp_crop" else "oracle_object_crop"
-    else:
-        method = "unknown"
-        experiment = path.parent.name
+def csv_value(value: Any) -> str:
+    return "" if value is None else str(value)
 
-    if "test_unseen" in path.name:
-        split = "test_unseen"
-    elif "test_seen" in path.name:
-        split = "test_seen"
-    else:
-        split = "unknown"
+
+def infer_info(path: Path, summary: dict[str, Any], total: int, parsed: int) -> ResultInfo:
+    manifest_info = infer_checkpoint_manifest(path)
+    method = manifest_info["method"]
+    experiment = manifest_info["experiment"]
+    split = manifest_info["split"]
+    evaluation_mode = manifest_info["evaluation_mode"]
     return ResultInfo(
         result_id=f"{method}:{experiment}:{split}:{path.name}",
         method=method,
@@ -157,6 +151,12 @@ def infer_info(path: Path, total: int, parsed: int) -> ResultInfo:
         path=path,
         total=total,
         parsed=parsed,
+        evaluation_mode=evaluation_mode,
+        target_coordinate_frame=csv_value(manifest_info.get("target_coordinate_frame", "")),
+        bbox_edge_expand=csv_value(manifest_info.get("bbox_edge_expand", "")),
+        min_bbox_half_size=csv_value(manifest_info.get("min_bbox_half_size", "")),
+        target_grasp_index=csv_value(manifest_info.get("target_grasp_index", "")),
+        loaded_vcot_config=csv_value(manifest_info.get("loaded_vcot_config", "")),
     )
 
 
@@ -212,6 +212,7 @@ def read_result_file(
     args,
 ) -> tuple[ResultInfo, list[dict[str, Any]]]:
     data = json.loads(path.read_text(encoding="utf-8"))
+    summary = data.get("summary", {}) if isinstance(data.get("summary", {}), dict) else {}
     outputs = data.get("outputs", [])
     records = []
     for output in outputs:
@@ -223,7 +224,7 @@ def read_result_file(
             continue
         row["crop_box"] = output.get("crop_box")
         records.append(row)
-    return infer_info(path, total=len(outputs), parsed=len(records)), records
+    return infer_info(path, summary=summary, total=len(outputs), parsed=len(records)), records
 
 
 def rate(records: list[dict[str, Any]], key: str, total: int) -> float:
@@ -256,6 +257,12 @@ def write_main_summary(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[
             "method": info.method,
             "experiment": info.experiment,
             "split": info.split,
+            "evaluation_mode": info.evaluation_mode,
+            "target_coordinate_frame": info.target_coordinate_frame,
+            "bbox_edge_expand": info.bbox_edge_expand,
+            "min_bbox_half_size": info.min_bbox_half_size,
+            "target_grasp_index": info.target_grasp_index,
+            "loaded_vcot_config": info.loaded_vcot_config,
             "result_path": str(info.path),
             "total": info.total,
             "parsed": info.parsed,
@@ -279,6 +286,11 @@ def write_main_summary(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[
         "method",
         "experiment",
         "split",
+        "evaluation_mode",
+        "target_coordinate_frame",
+        "bbox_edge_expand",
+        "min_bbox_half_size",
+        "target_grasp_index",
         "total",
         "parsed",
         "parse_rate",
@@ -299,6 +311,7 @@ def write_main_summary(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[
         "best_iou_width_height_error_mean",
         "result_id",
         "result_path",
+        "loaded_vcot_config",
     ]
     write_csv(out_dir / "main_summary.csv", rows, fieldnames)
 

@@ -60,14 +60,21 @@ def parse_args():
     parser.add_argument("--num-beams", type=int, default=1)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=32)
-    parser.add_argument("--max-num", type=int, default=6)
+    parser.add_argument("--max-num", type=int, default=None)
     parser.add_argument("--vcot-image-size", type=int, default=416)
-    parser.add_argument("--bbox-edge-expand", type=int, default=DEFAULT_BBOX_EDGE_EXPAND)
-    parser.add_argument("--min-bbox-half-size", type=int, default=DEFAULT_MIN_BBOX_HALF_SIZE)
+    parser.add_argument("--bbox-edge-expand", type=int, default=None)
+    parser.add_argument("--min-bbox-half-size", type=int, default=None)
+    parser.add_argument("--target-grasp-index", type=int, default=None)
     parser.add_argument(
         "--target-coordinate-frame",
         choices=[TARGET_FRAME_FULL_IMAGE, TARGET_FRAME_CROP_IMAGE],
-        default=TARGET_FRAME_FULL_IMAGE,
+        default=None,
+        help="Stage-2 grasp output frame. Defaults to the checkpoint vcot_config.json when available.",
+    )
+    parser.add_argument(
+        "--vcot-config",
+        default=None,
+        help="Optional explicit VCoT/crop config JSON. Otherwise eval searches the checkpoint and its parent.",
     )
     parser.add_argument("--out-dir", default=str(REPO_ROOT / "result/vcot_grasp_crop"))
     parser.add_argument("--limit", type=int, default=None)
@@ -93,6 +100,102 @@ def full_grasp_to_norm(grasp: list[float], image_size: int = 416) -> list[float]
     ]
 
 
+def _first_present(config: dict, *keys, default=None):
+    for key in keys:
+        if key in config and config[key] is not None:
+            return config[key]
+    return default
+
+
+def _required_config_value(args, config: dict, config_path: Path, attr: str, *keys, cast=None):
+    explicit_value = getattr(args, attr)
+    if explicit_value is not None:
+        return explicit_value
+
+    value = _first_present(config, *keys, default=None)
+    if value is None:
+        option = "--" + attr.replace("_", "-")
+        source = str(config_path)
+        raise ValueError(
+            f"{option} is not set and no matching value was found in {source}. "
+            f"Write vcot_config.json for this experiment or pass {option} explicitly."
+        )
+    return cast(value) if cast is not None else value
+
+
+def find_vcot_config(checkpoint: str | Path, explicit_config: str | None = None) -> Path:
+    if explicit_config:
+        path = Path(explicit_config).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"VCoT config not found: {path}")
+        return path
+
+    checkpoint_path = Path(checkpoint).expanduser().resolve()
+    candidates = []
+    if checkpoint_path.is_dir():
+        candidates.append(checkpoint_path / "vcot_config.json")
+        candidates.append(checkpoint_path.parent / "vcot_config.json")
+    else:
+        candidates.append(checkpoint_path.parent / "vcot_config.json")
+        candidates.append(checkpoint_path.parent.parent / "vcot_config.json")
+    for path in candidates:
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        f"vcot_config.json not found for checkpoint {checkpoint_path}. "
+        "Expected it in the checkpoint directory or its parent."
+    )
+
+
+def apply_vcot_config(args):
+    config_path = find_vcot_config(args.checkpoint, args.vcot_config)
+    config = {}
+    if config_path is not None:
+        config = json.loads(config_path.read_text(encoding="utf-8"))
+
+    args.target_coordinate_frame = _required_config_value(
+        args,
+        config,
+        config_path,
+        "target_coordinate_frame",
+        "target_coordinate_frame",
+    )
+    args.bbox_edge_expand = _required_config_value(
+        args,
+        config,
+        config_path,
+        "bbox_edge_expand",
+        "bbox_edge_expand",
+        cast=int,
+    )
+    args.min_bbox_half_size = _required_config_value(
+        args,
+        config,
+        config_path,
+        "min_bbox_half_size",
+        "min_bbox_half_size",
+        cast=int,
+    )
+    args.target_grasp_index = _required_config_value(
+        args,
+        config,
+        config_path,
+        "target_grasp_index",
+        "target_grasp_index",
+        cast=int,
+    )
+    if args.max_num is None:
+        args.max_num = int(config.get("max_dynamic_patch") or 6)
+
+    if args.target_coordinate_frame not in {TARGET_FRAME_FULL_IMAGE, TARGET_FRAME_CROP_IMAGE}:
+        raise ValueError(
+            f"Unsupported target_coordinate_frame={args.target_coordinate_frame}; "
+            f"expected {TARGET_FRAME_FULL_IMAGE} or {TARGET_FRAME_CROP_IMAGE}"
+        )
+    args.loaded_vcot_config = str(config_path)
+    return args
+
+
 class CropGraspDataset(Dataset):
     def __init__(
         self,
@@ -106,6 +209,7 @@ class CropGraspDataset(Dataset):
         bbox_edge_expand: int = DEFAULT_BBOX_EDGE_EXPAND,
         min_bbox_half_size: int = DEFAULT_MIN_BBOX_HALF_SIZE,
         target_coordinate_frame: str = TARGET_FRAME_FULL_IMAGE,
+        target_grasp_index: int = 0,
         limit: int | None = None,
     ):
         self.records = []
@@ -123,6 +227,7 @@ class CropGraspDataset(Dataset):
         self.bbox_edge_expand = bbox_edge_expand
         self.min_bbox_half_size = min_bbox_half_size
         self.target_coordinate_frame = target_coordinate_frame
+        self.target_grasp_index = target_grasp_index
         self.transform = build_transform(is_train=False, input_size=image_size)
 
     def __len__(self):
@@ -136,6 +241,7 @@ class CropGraspDataset(Dataset):
             bbox_edge_expand=self.bbox_edge_expand,
             min_bbox_half_size=self.min_bbox_half_size,
             target_coordinate_frame=self.target_coordinate_frame,
+            target_grasp_index=self.target_grasp_index,
             include_all_grasps=True,
         )
         source_images: list[Image.Image] = item["image"]
@@ -294,6 +400,7 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
         bbox_edge_expand=args.bbox_edge_expand,
         min_bbox_half_size=args.min_bbox_half_size,
         target_coordinate_frame=args.target_coordinate_frame,
+        target_grasp_index=args.target_grasp_index,
         limit=args.limit,
     )
     loader = DataLoader(
@@ -380,6 +487,15 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
             vcot_iou_threshold=args.vcot_iou_threshold,
             vcot_angle_threshold=args.vcot_angle_threshold,
         )
+        summary.update({
+            "evaluation_mode": "oracle_crop",
+            "checkpoint": args.checkpoint,
+            "target_coordinate_frame": args.target_coordinate_frame,
+            "bbox_edge_expand": args.bbox_edge_expand,
+            "min_bbox_half_size": args.min_bbox_half_size,
+            "target_grasp_index": args.target_grasp_index,
+            "loaded_vcot_config": args.loaded_vcot_config,
+        })
         for output in outputs:
             output.pop("target_labels", None)
         output_path.write_text(json.dumps({"summary": summary, "outputs": outputs}, indent=2), encoding="utf-8")
@@ -391,6 +507,7 @@ def main():
     args = parse_args()
     assert args.batch_size == 1, "Only batch size 1 is supported"
     args.checkpoint = str(Path(args.checkpoint).resolve())
+    args = apply_vcot_config(args)
     if int(os.getenv("WORLD_SIZE", "1")) > 1:
         torch.distributed.init_process_group(
             backend="nccl",
@@ -406,6 +523,14 @@ def main():
     if rank() == 0:
         print(f"checkpoint: {args.checkpoint}")
         print(f"image_size: {image_size}, use_thumbnail: {use_thumbnail}, max_num: {args.max_num}")
+        print(
+            "crop eval config: "
+            f"target_coordinate_frame={args.target_coordinate_frame}, "
+            f"bbox_edge_expand={args.bbox_edge_expand}, "
+            f"min_bbox_half_size={args.min_bbox_half_size}, "
+            f"target_grasp_index={args.target_grasp_index}, "
+            f"loaded_vcot_config={args.loaded_vcot_config}"
+        )
 
     root = Path(args.manifest_root)
     for dataset_name in args.datasets.split(","):

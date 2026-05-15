@@ -9,6 +9,8 @@ LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
 GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
+cd "${GP_ROOT}/InternVL/internvl_chat"
+
 USE_LLM_LORA=${USE_LLM_LORA:-16}
 LEARNING_RATE=${LEARNING_RATE:-8e-5}
 NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-1}
@@ -40,7 +42,25 @@ OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXPERIMENT_NAME}"}
 LOG_DIR=${LOG_DIR:-"${OUTPUT_DIR}/logs"}
 TRAINING_LOG_PATH=${TRAINING_LOG_PATH:-"${LOG_DIR}/train.log"}
 
+python "${GP_ROOT}/scripts/ensure_grasp_data.py" direct \
+  --meta-path "${META_PATH}" \
+  --splits train
+
 mkdir -p "${LOG_DIR}"
+
+VCOT_CONFIG_PATH="${OUTPUT_DIR}/vcot_config.json"
+python "${GP_ROOT}/scripts/grasp_config.py" write \
+  --pipeline direct_grasp \
+  --experiment-name "${EXPERIMENT_NAME}" \
+  --meta-path "${META_PATH}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --config-path "${VCOT_CONFIG_PATH}" \
+  --use-llm-lora "${USE_LLM_LORA}" \
+  --learning-rate "${LEARNING_RATE}" \
+  --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+  --max-dynamic-patch "${MAX_DYNAMIC_PATCH}" \
+  --force-image-size "${FORCE_IMAGE_SIZE}"
+echo "Direct config: ${VCOT_CONFIG_PATH}"
 
 if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
   if ! { [ -f "${OUTPUT_DIR}/model.safetensors" ] || find "${OUTPUT_DIR}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit | grep -q .; }; then
@@ -97,3 +117,16 @@ torchrun \
   --deepspeed "zero_stage1_config.json" \
   --report_to "tensorboard" \
   2>&1 | tee -a "${TRAINING_LOG_PATH}"
+
+python "${GP_ROOT}/scripts/grasp_config.py" write \
+  --pipeline direct_grasp \
+  --experiment-name "${EXPERIMENT_NAME}" \
+  --meta-path "${META_PATH}" \
+  --output-dir "${OUTPUT_DIR}" \
+  --config-path "${VCOT_CONFIG_PATH}" \
+  --use-llm-lora "${USE_LLM_LORA}" \
+  --learning-rate "${LEARNING_RATE}" \
+  --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+  --max-dynamic-patch "${MAX_DYNAMIC_PATCH}" \
+  --force-image-size "${FORCE_IMAGE_SIZE}" \
+  --copy-to-checkpoints
