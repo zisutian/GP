@@ -39,18 +39,15 @@ def csv_value(value: Any) -> str:
 
 def config_work_dir(config_path: Path, config: dict[str, Any]) -> Path:
     output_dir = config.get("output_dir")
-    if output_dir:
-        return Path(output_dir)
-    parent = config_path.parent
-    if parent.name.startswith("checkpoint-"):
-        return parent.parent
-    return parent
+    if not output_dir:
+        raise ValueError(f"{config_path} is missing output_dir.")
+    return Path(output_dir)
 
 
 def required_summary_value(summary: dict[str, Any], key: str, result_path: Path) -> Any:
     value = summary.get(key)
     if value in (None, ""):
-        raise ValueError(f"{result_path} is missing summary.{key}; rerun eval or migrate the result summary.")
+        raise ValueError(f"{result_path} is missing summary.{key}; rerun eval with the current result schema.")
     return value
 
 
@@ -73,6 +70,12 @@ def infer(path: Path) -> dict[str, str]:
         raise ValueError(f"Unsupported evaluation_mode for {path}: {evaluation_mode}")
     method = EVALUATION_MODE_TO_METHOD[evaluation_mode]
     experiment = str(config["experiment_name"])
+    uses_crop_contract = evaluation_mode in {"oracle_crop", "predicted_vcot"}
+
+    def crop_summary_value(key: str) -> str:
+        if not uses_crop_contract:
+            return ""
+        return csv_value(required_summary_value(summary, key, path))
 
     return {
         "method": method,
@@ -80,10 +83,10 @@ def infer(path: Path) -> dict[str, str]:
         "split": split_name(path),
         "result_path": str(path),
         "evaluation_mode": evaluation_mode,
-        "target_coordinate_frame": csv_value(summary.get("target_coordinate_frame", config.get("target_coordinate_frame"))),
-        "bbox_edge_expand": csv_value(summary.get("bbox_edge_expand", config.get("bbox_edge_expand"))),
-        "min_bbox_half_size": csv_value(summary.get("min_bbox_half_size", config.get("min_bbox_half_size"))),
-        "target_grasp_index": csv_value(summary.get("target_grasp_index", config.get("target_grasp_index"))),
+        "target_coordinate_frame": crop_summary_value("target_coordinate_frame"),
+        "bbox_edge_expand": crop_summary_value("bbox_edge_expand"),
+        "min_bbox_half_size": crop_summary_value("min_bbox_half_size"),
+        "target_grasp_index": crop_summary_value("target_grasp_index"),
         "work_dir": str(work_path),
         "latest_checkpoint": str(checkpoint),
         "checkpoint_exists": "True",

@@ -4,6 +4,7 @@ import argparse
 import csv
 import io
 import json
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,12 @@ GEOMETRY_LEVELS = {
 CENTER_THRESHOLDS = [5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0]
 ANGLE_THRESHOLDS = [5.0, 10.0, 15.0, 20.0, 30.0]
 IOU_THRESHOLDS = [0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50]
+METHOD_DIRS = {
+    "direct": "direct_grasp",
+    "oracle_crop": "oracle_crop",
+    "pred_vcot": "predicted_vcot",
+}
+COMPARISON_DIR = "comparisons"
 
 
 @dataclass
@@ -137,7 +144,7 @@ def csv_value(value: Any) -> str:
     return "" if value is None else str(value)
 
 
-def infer_info(path: Path, summary: dict[str, Any], total: int, parsed: int) -> ResultInfo:
+def infer_info(path: Path, total: int, parsed: int) -> ResultInfo:
     manifest_info = infer_checkpoint_manifest(path)
     method = manifest_info["method"]
     experiment = manifest_info["experiment"]
@@ -212,7 +219,6 @@ def read_result_file(
     args,
 ) -> tuple[ResultInfo, list[dict[str, Any]]]:
     data = json.loads(path.read_text(encoding="utf-8"))
-    summary = data.get("summary", {}) if isinstance(data.get("summary", {}), dict) else {}
     outputs = data.get("outputs", [])
     records = []
     for output in outputs:
@@ -224,7 +230,7 @@ def read_result_file(
             continue
         row["crop_box"] = output.get("crop_box")
         records.append(row)
-    return infer_info(path, summary=summary, total=len(outputs), parsed=len(records)), records
+    return infer_info(path, total=len(outputs), parsed=len(records)), records
 
 
 def rate(records: list[dict[str, Any]], key: str, total: int) -> float:
@@ -238,6 +244,69 @@ def mean(records: list[dict[str, Any]], key: str) -> float:
     return float(np.mean(values)) if values else 0.0
 
 
+def value_mean(values: list[float]) -> float:
+    return float(np.mean(values)) if values else 0.0
+
+
+def value_percentile(values: list[float], percentile: float) -> float:
+    return float(np.percentile(np.array(values, dtype=np.float64), percentile)) if values else 0.0
+
+
+def valid_xyxy(box: Any) -> bool:
+    if not isinstance(box, (list, tuple)) or len(box) != 4:
+        return False
+    x0, y0, x1, y1 = [float(value) for value in box]
+    return x1 > x0 and y1 > y0
+
+
+def xyxy_iou(box_a: Any, box_b: Any) -> float | None:
+    if not valid_xyxy(box_a) or not valid_xyxy(box_b):
+        return None
+    ax0, ay0, ax1, ay1 = [float(value) for value in box_a]
+    bx0, by0, bx1, by1 = [float(value) for value in box_b]
+    inter_x0 = max(ax0, bx0)
+    inter_y0 = max(ay0, by0)
+    inter_x1 = min(ax1, bx1)
+    inter_y1 = min(ay1, by1)
+    inter_w = max(0.0, inter_x1 - inter_x0)
+    inter_h = max(0.0, inter_y1 - inter_y0)
+    inter_area = inter_w * inter_h
+    area_a = (ax1 - ax0) * (ay1 - ay0)
+    area_b = (bx1 - bx0) * (by1 - by0)
+    union = area_a + area_b - inter_area
+    return inter_area / union if union > 0 else 0.0
+
+
+def xyxy_center_error(box_a: Any, box_b: Any) -> float | None:
+    if not valid_xyxy(box_a) or not valid_xyxy(box_b):
+        return None
+    ax0, ay0, ax1, ay1 = [float(value) for value in box_a]
+    bx0, by0, bx1, by1 = [float(value) for value in box_b]
+    center_a = np.array([(ax0 + ax1) / 2.0, (ay0 + ay1) / 2.0], dtype=np.float32)
+    center_b = np.array([(bx0 + bx1) / 2.0, (by0 + by1) / 2.0], dtype=np.float32)
+    return float(np.linalg.norm(center_a - center_b))
+
+
+def target_crop_frame_flags(target_full_grasp: Any, crop_box: Any) -> dict[str, bool]:
+    if not valid_xyxy(crop_box) or not isinstance(target_full_grasp, (list, tuple)) or len(target_full_grasp) < 4:
+        return {
+            "grasp_center_outside_crop": True,
+            "grasp_size_gt_crop": True,
+            "grasp_not_expressible_crop_frame": True,
+        }
+    x0, y0, x1, y1 = [float(value) for value in crop_box]
+    x, y, w, h = [float(value) for value in target_full_grasp[:4]]
+    crop_w = x1 - x0
+    crop_h = y1 - y0
+    center_outside = x < x0 or x > x1 or y < y0 or y > y1
+    size_gt_crop = w > crop_w or h > crop_h
+    return {
+        "grasp_center_outside_crop": center_outside,
+        "grasp_size_gt_crop": size_gt_crop,
+        "grasp_not_expressible_crop_frame": center_outside or size_gt_crop,
+    }
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str] | None = None):
     path.parent.mkdir(parents=True, exist_ok=True)
     if fieldnames is None:
@@ -247,6 +316,32 @@ def write_csv(path: Path, rows: list[dict[str, Any]], fieldnames: list[str] | No
         writer.writeheader()
         for row in rows:
             writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
+def write_section_csv(
+    out_dir: Path,
+    section_name: str,
+    filename: str,
+    rows: list[dict[str, Any]],
+    fieldnames: list[str] | None = None,
+):
+    write_csv(out_dir / section_name / filename, rows, fieldnames)
+
+
+def reset_analysis_output_dir(out_dir: Path):
+    resolved = out_dir.resolve()
+    protected = {Path("/").resolve(), Path.home().resolve(), REPO_ROOT.resolve(), REPO_ROOT.parent.resolve()}
+    if resolved in protected:
+        raise ValueError(f"Refusing to reset protected analysis output directory: {out_dir}")
+    shutil.rmtree(out_dir, ignore_errors=True)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+
+def grouped_for_method(
+    grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]],
+    method: str,
+) -> dict[str, tuple[ResultInfo, list[dict[str, Any]]]]:
+    return {result_id: item for result_id, item in grouped.items() if item[0].method == method}
 
 
 def write_main_summary(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
@@ -346,36 +441,6 @@ def write_error_stats(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[d
     write_csv(out_dir / "error_stats.csv", rows)
 
 
-def write_sample_metrics(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
-    rows = []
-    for result_id, (info, records) in grouped.items():
-        for record in records:
-            row = {
-                "method": info.method,
-                "experiment": info.experiment,
-                "split": info.split,
-                "result_id": result_id,
-                "grasp_id": record["grasp_id"],
-                "obj_name": record["obj_name"],
-                "official_success": int(record["official_success"]),
-                "top1_success": int(record["top1_success"]),
-                "target_label_count": record["target_label_count"],
-                "top1_center_xy_error_px": record["top1_center_xy_error_px"],
-                "top1_width_height_error_px": record["top1_width_height_error_px"],
-                "top1_circular_angle_error_deg": record["top1_circular_angle_error_deg"],
-                "top1_iou": record["top1_iou"],
-                "best_iou_center_xy_error_px": record["best_iou_center_xy_error_px"],
-                "best_iou_width_height_error_px": record["best_iou_width_height_error_px"],
-                "best_iou_circular_angle_error_deg": record["best_iou_circular_angle_error_deg"],
-                "max_iou_with_all_labels": record["max_iou_with_all_labels"],
-            }
-            for level in GEOMETRY_LEVELS:
-                row[f"top1_{level}"] = int(record[f"top1_{level}"])
-                row[f"all_labels_{level}"] = int(record[f"all_labels_{level}"])
-            rows.append(row)
-    write_csv(out_dir / "sample_metrics.csv", rows)
-
-
 def write_geometry_sweep(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
     rows = []
     for result_id, (info, records) in grouped.items():
@@ -445,10 +510,9 @@ def write_iou_sweep(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dic
 def write_direct_crop_cross(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
     direct_items = [(rid, info, rows) for rid, (info, rows) in grouped.items() if info.method == "direct"]
     crop_items = [(rid, info, rows) for rid, (info, rows) in grouped.items() if info.method == "oracle_crop"]
-    conditions = ["official_success", "top1_success"]
-    for level in GEOMETRY_LEVELS:
-        conditions.append(f"top1_{level}")
-        conditions.append(f"all_labels_{level}")
+    if not direct_items or not crop_items:
+        return
+    conditions = cross_conditions()
 
     rows = []
     for direct_id, direct_info, direct_records in direct_items:
@@ -487,14 +551,118 @@ def write_direct_crop_cross(out_dir: Path, grouped: dict[str, tuple[ResultInfo, 
                     "direct_result_id": direct_id,
                     "crop_result_id": crop_id,
                 })
-    write_csv(out_dir / "direct_vs_crop_cross.csv", rows)
+    fieldnames = [
+        "split",
+        "condition",
+        "direct_experiment",
+        "crop_experiment",
+        "matched_total",
+        "both_success",
+        "both_fail",
+        "direct_success_crop_fail",
+        "direct_fail_crop_success",
+        "rescued_by_crop",
+        "broken_by_crop",
+        "net_gain",
+        "rescued_rate",
+        "broken_rate",
+        "net_gain_rate",
+        "direct_result_id",
+        "crop_result_id",
+    ]
+    write_section_csv(out_dir, COMPARISON_DIR, "direct_vs_crop_cross.csv", rows, fieldnames)
+
+
+def cross_conditions() -> list[str]:
+    conditions = ["official_success", "top1_success"]
+    for level in GEOMETRY_LEVELS:
+        conditions.append(f"top1_{level}")
+        conditions.append(f"all_labels_{level}")
+    return conditions
+
+
+def write_direct_pred_vcot_cross(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
+    direct_items = [(rid, info, rows) for rid, (info, rows) in grouped.items() if info.method == "direct"]
+    pred_items = [(rid, info, rows) for rid, (info, rows) in grouped.items() if info.method == "pred_vcot"]
+    if not direct_items or not pred_items:
+        return
+    conditions = cross_conditions()
+
+    summary_rows = []
+    for direct_id, direct_info, direct_records in direct_items:
+        direct_by_id = {record["grasp_id"]: record for record in direct_records}
+        for pred_id, pred_info, pred_records in pred_items:
+            if direct_info.split != pred_info.split:
+                continue
+            pred_by_id = {record["grasp_id"]: record for record in pred_records}
+            shared_ids = sorted(set(direct_by_id) & set(pred_by_id))
+            for condition in conditions:
+                both_success = both_fail = direct_success_pred_fail = direct_fail_pred_success = 0
+                for grasp_id in shared_ids:
+                    direct_success = bool(direct_by_id[grasp_id][condition])
+                    pred_success = bool(pred_by_id[grasp_id][condition])
+                    both_success += int(direct_success and pred_success)
+                    both_fail += int(not direct_success and not pred_success)
+                    direct_success_pred_fail += int(direct_success and not pred_success)
+                    direct_fail_pred_success += int(not direct_success and pred_success)
+
+                total = len(shared_ids)
+                summary_rows.append({
+                    "split": direct_info.split,
+                    "condition": condition,
+                    "direct_experiment": direct_info.experiment,
+                    "pred_vcot_experiment": pred_info.experiment,
+                    "matched_total": total,
+                    "both_success": both_success,
+                    "both_fail": both_fail,
+                    "direct_success_pred_fail": direct_success_pred_fail,
+                    "direct_fail_pred_success": direct_fail_pred_success,
+                    "rescued_by_pred_vcot": direct_fail_pred_success,
+                    "broken_by_pred_vcot": direct_success_pred_fail,
+                    "net_gain": direct_fail_pred_success - direct_success_pred_fail,
+                    "rescued_rate": direct_fail_pred_success / total if total else 0.0,
+                    "broken_rate": direct_success_pred_fail / total if total else 0.0,
+                    "net_gain_rate": (direct_fail_pred_success - direct_success_pred_fail) / total if total else 0.0,
+                    "direct_result_id": direct_id,
+                    "pred_vcot_result_id": pred_id,
+                })
+
+    summary_fieldnames = [
+        "split",
+        "condition",
+        "direct_experiment",
+        "pred_vcot_experiment",
+        "matched_total",
+        "both_success",
+        "both_fail",
+        "direct_success_pred_fail",
+        "direct_fail_pred_success",
+        "rescued_by_pred_vcot",
+        "broken_by_pred_vcot",
+        "net_gain",
+        "rescued_rate",
+        "broken_rate",
+        "net_gain_rate",
+        "direct_result_id",
+        "pred_vcot_result_id",
+    ]
+    write_section_csv(
+        out_dir,
+        COMPARISON_DIR,
+        "direct_vs_pred_vcot_cross.csv",
+        summary_rows,
+        summary_fieldnames,
+    )
 
 
 def crop_quality_for_record(record: dict[str, Any], mask_txn, image_size: int) -> dict[str, float] | None:
-    crop_box = record.get("crop_box")
-    if not crop_box:
+    return crop_quality_for_box(record["grasp_id"], record.get("crop_box"), mask_txn, image_size)
+
+
+def crop_quality_for_box(grasp_id: str, crop_box: Any, mask_txn, image_size: int) -> dict[str, float] | None:
+    if not valid_xyxy(crop_box):
         return None
-    mask = load_mask(mask_txn, record["grasp_id"])
+    mask = load_mask(mask_txn, grasp_id)
     if mask is None:
         return None
 
@@ -527,6 +695,9 @@ def write_crop_quality(
     mask_env,
     image_size: int,
 ):
+    if not any(info.method == "oracle_crop" for info, _records in grouped.values()):
+        return
+
     sample_rows = []
     with mask_env.begin() as mask_txn:
         for result_id, (info, records) in grouped.items():
@@ -547,8 +718,6 @@ def write_crop_quality(
                     "top1_success": int(record["top1_success"]),
                     **quality,
                 })
-    write_csv(out_dir / "crop_quality_samples.csv", sample_rows)
-
     summary_rows = []
     for result_id in sorted({row["result_id"] for row in sample_rows}):
         subset = [row for row in sample_rows if row["result_id"] == result_id]
@@ -572,7 +741,242 @@ def write_crop_quality(
                     **metric_stats,
                     "result_id": result_id,
                 })
-    write_csv(out_dir / "crop_quality_summary.csv", summary_rows)
+    summary_fieldnames = [
+        "method",
+        "experiment",
+        "split",
+        "group",
+        "metric",
+        "count",
+        "mean",
+        "median",
+        "p75",
+        "p90",
+        "result_id",
+    ]
+    write_section_csv(out_dir, METHOD_DIRS["oracle_crop"], "crop_quality_summary.csv", summary_rows, summary_fieldnames)
+
+
+def write_predicted_vcot_diagnostics(
+    out_dir: Path,
+    grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]],
+    mask_env,
+    image_size: int,
+):
+    if not any(info.method == "pred_vcot" for info, _records in grouped.values()):
+        return
+
+    summary_rows = []
+
+    with mask_env.begin() as mask_txn:
+        for result_id, (info, records) in grouped.items():
+            if info.method != "pred_vcot":
+                continue
+            data = json.loads(info.path.read_text(encoding="utf-8"))
+            outputs = data.get("outputs", [])
+            records_by_id = {record["grasp_id"]: record for record in records}
+
+            bbox_ious = []
+            bbox_center_errors = []
+            crop_ious = []
+            crop_center_errors = []
+            object_coverages = []
+            background_ratios = []
+            crop_area_ratios = []
+            success_bbox_ious = []
+            fail_bbox_ious = []
+            success_crop_ious = []
+            fail_crop_ious = []
+            success_object_coverages = []
+            fail_object_coverages = []
+
+            bbox_parsed = 0
+            pred_crop_valid = 0
+            good_crop_count = 0
+            bad_crop_count = 0
+            good_crop_success = 0
+            bad_crop_success = 0
+            bbox_iou_ge_050_count = 0
+            bbox_iou_lt_050_count = 0
+            bbox_iou_ge_050_success = 0
+            bbox_iou_lt_050_success = 0
+            grasp_center_outside = 0
+            grasp_size_gt_crop = 0
+            grasp_not_expressible = 0
+
+            for output in outputs:
+                grasp_id = output.get("grasp_id", "")
+                record = records_by_id.get(grasp_id)
+                official = bool(record and record.get("official_success"))
+                pred_bbox = output.get("pred_bbox_xyxy")
+                gt_bbox = output.get("gt_bbox_xyxy")
+                pred_crop = output.get("pred_crop_box")
+                gt_crop = output.get("gt_crop_box")
+
+                bbox_iou = output.get("pred_bbox_iou")
+                if bbox_iou is None:
+                    bbox_iou = xyxy_iou(pred_bbox, gt_bbox)
+                else:
+                    bbox_iou = float(bbox_iou)
+                bbox_center_error = xyxy_center_error(pred_bbox, gt_bbox)
+                crop_iou = xyxy_iou(pred_crop, gt_crop)
+                crop_center_error = xyxy_center_error(pred_crop, gt_crop)
+                quality = crop_quality_for_box(grasp_id, pred_crop, mask_txn, image_size)
+                express_flags = target_crop_frame_flags(output.get("target_full_grasp"), pred_crop)
+
+                bbox_ok = bbox_iou is not None
+                crop_ok = valid_xyxy(pred_crop)
+                bbox_parsed += int(bbox_ok)
+                pred_crop_valid += int(crop_ok)
+                grasp_center_outside += int(express_flags["grasp_center_outside_crop"])
+                grasp_size_gt_crop += int(express_flags["grasp_size_gt_crop"])
+                grasp_not_expressible += int(express_flags["grasp_not_expressible_crop_frame"])
+
+                object_coverage = quality["object_coverage"] if quality else None
+                background_ratio = quality["background_ratio"] if quality else None
+                crop_area_ratio = quality["crop_area_ratio"] if quality else None
+                good_crop = bool(crop_ok and crop_iou is not None and crop_iou >= 0.50 and object_coverage is not None and object_coverage >= 0.95)
+                bad_crop = not good_crop
+
+                if bbox_iou is not None:
+                    bbox_ious.append(float(bbox_iou))
+                    (success_bbox_ious if official else fail_bbox_ious).append(float(bbox_iou))
+                    if bbox_iou >= 0.50:
+                        bbox_iou_ge_050_count += 1
+                        bbox_iou_ge_050_success += int(official)
+                    else:
+                        bbox_iou_lt_050_count += 1
+                        bbox_iou_lt_050_success += int(official)
+                if bbox_center_error is not None:
+                    bbox_center_errors.append(float(bbox_center_error))
+                if crop_iou is not None:
+                    crop_ious.append(float(crop_iou))
+                    (success_crop_ious if official else fail_crop_ious).append(float(crop_iou))
+                if crop_center_error is not None:
+                    crop_center_errors.append(float(crop_center_error))
+                if object_coverage is not None:
+                    object_coverages.append(float(object_coverage))
+                    (success_object_coverages if official else fail_object_coverages).append(float(object_coverage))
+                if background_ratio is not None:
+                    background_ratios.append(float(background_ratio))
+                if crop_area_ratio is not None:
+                    crop_area_ratios.append(float(crop_area_ratio))
+
+                if good_crop:
+                    good_crop_count += 1
+                    good_crop_success += int(official)
+                if bad_crop:
+                    bad_crop_count += 1
+                    bad_crop_success += int(official)
+
+            total = len(outputs)
+            parsed = len(records)
+            summary_rows.append({
+                "experiment": info.experiment,
+                "split": info.split,
+                "result_json": str(info.path),
+                "target_coordinate_frame": info.target_coordinate_frame,
+                "bbox_edge_expand": info.bbox_edge_expand,
+                "min_bbox_half_size": info.min_bbox_half_size,
+                "target_grasp_index": info.target_grasp_index,
+                "total": total,
+                "bbox_parse_rate": bbox_parsed / total if total else 0.0,
+                "parse_rate": parsed / total if total else 0.0,
+                "success_rate": rate(records, "official_success", total),
+                "top1_success_rate": rate(records, "top1_success", total),
+                "bbox_iou_mean": value_mean(bbox_ious),
+                "bbox_iou_p10": value_percentile(bbox_ious, 10),
+                "bbox_iou_lt_025_rate": sum(value < 0.25 for value in bbox_ious) / len(bbox_ious) if bbox_ious else 0.0,
+                "bbox_iou_lt_050_rate": sum(value < 0.50 for value in bbox_ious) / len(bbox_ious) if bbox_ious else 0.0,
+                "bbox_center_error_mean": value_mean(bbox_center_errors),
+                "pred_crop_valid_rate": pred_crop_valid / total if total else 0.0,
+                "crop_iou_mean": value_mean(crop_ious),
+                "crop_iou_p10": value_percentile(crop_ious, 10),
+                "crop_iou_lt_050_rate": sum(value < 0.50 for value in crop_ious) / len(crop_ious) if crop_ious else 0.0,
+                "crop_center_error_mean": value_mean(crop_center_errors),
+                "object_coverage_mean": value_mean(object_coverages),
+                "object_coverage_p10": value_percentile(object_coverages, 10),
+                "object_coverage_lt_095_rate": sum(value < 0.95 for value in object_coverages) / len(object_coverages) if object_coverages else 0.0,
+                "object_coverage_lt_080_rate": sum(value < 0.80 for value in object_coverages) / len(object_coverages) if object_coverages else 0.0,
+                "background_ratio_mean": value_mean(background_ratios),
+                "background_ratio_p90": value_percentile(background_ratios, 90),
+                "crop_area_ratio_mean": value_mean(crop_area_ratios),
+                "crop_area_ratio_p90": value_percentile(crop_area_ratios, 90),
+                "grasp_center_outside_crop_rate": grasp_center_outside / total if total else 0.0,
+                "grasp_size_gt_crop_rate": grasp_size_gt_crop / total if total else 0.0,
+                "grasp_not_expressible_crop_frame_rate": grasp_not_expressible / total if total else 0.0,
+                "success_rate_good_crop": good_crop_success / good_crop_count if good_crop_count else 0.0,
+                "success_rate_bad_crop": bad_crop_success / bad_crop_count if bad_crop_count else 0.0,
+                "good_crop_count": good_crop_count,
+                "bad_crop_count": bad_crop_count,
+                "success_rate_bbox_iou_ge_050": bbox_iou_ge_050_success / bbox_iou_ge_050_count if bbox_iou_ge_050_count else 0.0,
+                "success_rate_bbox_iou_lt_050": bbox_iou_lt_050_success / bbox_iou_lt_050_count if bbox_iou_lt_050_count else 0.0,
+                "bbox_iou_ge_050_count": bbox_iou_ge_050_count,
+                "bbox_iou_lt_050_count": bbox_iou_lt_050_count,
+                "success_bbox_iou_mean": value_mean(success_bbox_ious),
+                "fail_bbox_iou_mean": value_mean(fail_bbox_ious),
+                "success_crop_iou_mean": value_mean(success_crop_ious),
+                "fail_crop_iou_mean": value_mean(fail_crop_ious),
+                "success_object_coverage_mean": value_mean(success_object_coverages),
+                "fail_object_coverage_mean": value_mean(fail_object_coverages),
+            })
+
+    summary_fieldnames = [
+        "experiment",
+        "split",
+        "result_json",
+        "target_coordinate_frame",
+        "bbox_edge_expand",
+        "min_bbox_half_size",
+        "target_grasp_index",
+        "total",
+        "bbox_parse_rate",
+        "parse_rate",
+        "success_rate",
+        "top1_success_rate",
+        "bbox_iou_mean",
+        "bbox_iou_p10",
+        "bbox_iou_lt_025_rate",
+        "bbox_iou_lt_050_rate",
+        "bbox_center_error_mean",
+        "pred_crop_valid_rate",
+        "crop_iou_mean",
+        "crop_iou_p10",
+        "crop_iou_lt_050_rate",
+        "crop_center_error_mean",
+        "object_coverage_mean",
+        "object_coverage_p10",
+        "object_coverage_lt_095_rate",
+        "object_coverage_lt_080_rate",
+        "background_ratio_mean",
+        "background_ratio_p90",
+        "crop_area_ratio_mean",
+        "crop_area_ratio_p90",
+        "grasp_center_outside_crop_rate",
+        "grasp_size_gt_crop_rate",
+        "grasp_not_expressible_crop_frame_rate",
+        "success_rate_good_crop",
+        "success_rate_bad_crop",
+        "good_crop_count",
+        "bad_crop_count",
+        "success_rate_bbox_iou_ge_050",
+        "success_rate_bbox_iou_lt_050",
+        "bbox_iou_ge_050_count",
+        "bbox_iou_lt_050_count",
+        "success_bbox_iou_mean",
+        "fail_bbox_iou_mean",
+        "success_crop_iou_mean",
+        "fail_crop_iou_mean",
+        "success_object_coverage_mean",
+        "fail_object_coverage_mean",
+    ]
+    write_section_csv(
+        out_dir,
+        METHOD_DIRS["pred_vcot"],
+        "diagnostics_summary.csv",
+        summary_rows,
+        summary_fieldnames,
+    )
 
 
 def run_analysis(
@@ -585,7 +989,7 @@ def run_analysis(
     image_size: int = IMAGE_SIZE,
 ):
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    reset_analysis_output_dir(out_dir)
 
     grasp_env = lmdb.open(
         str(Path(grasp_lmdb)),
@@ -614,34 +1018,41 @@ def run_analysis(
         for result in results:
             info, records = read_result_file(Path(result), grasp_txn, analysis_args)
             grouped[info.result_id] = (info, records)
-            print(f"{info.method} {info.experiment} {info.split}: parsed {info.parsed}/{info.total}")
 
     write_main_summary(out_dir, grouped)
-    write_error_stats(out_dir, grouped)
-    write_sample_metrics(out_dir, grouped)
-    write_geometry_sweep(out_dir, grouped)
-    write_iou_sweep(out_dir, grouped)
+
+    for method, dirname in METHOD_DIRS.items():
+        method_grouped = grouped_for_method(grouped, method)
+        if not method_grouped:
+            continue
+        method_out_dir = out_dir / dirname
+        write_main_summary(method_out_dir, method_grouped)
+        write_error_stats(method_out_dir, method_grouped)
+        write_geometry_sweep(method_out_dir, method_grouped)
+        write_iou_sweep(method_out_dir, method_grouped)
+
     write_direct_crop_cross(out_dir, grouped)
+    write_direct_pred_vcot_cross(out_dir, grouped)
     write_crop_quality(out_dir, grouped, mask_env, image_size)
+    write_predicted_vcot_diagnostics(out_dir, grouped, mask_env, image_size)
+
+    outputs = sorted(str(path.relative_to(out_dir)) for path in out_dir.rglob("*.csv"))
 
     manifest = {
         "iou_threshold": iou_threshold,
         "angle_threshold": angle_threshold,
         "image_size": image_size,
         "result_count": len(grouped),
-        "outputs": [
-            "main_summary.csv",
-            "error_stats.csv",
-            "sample_metrics.csv",
-            "threshold_sweep_geometry.csv",
-            "threshold_sweep_iou.csv",
-            "direct_vs_crop_cross.csv",
-            "crop_quality_samples.csv",
-            "crop_quality_summary.csv",
-        ],
+        "outputs": outputs,
+        "method_dirs": {
+            method: dirname
+            for method, dirname in METHOD_DIRS.items()
+            if grouped_for_method(grouped, method)
+        },
+        "comparison_dir": COMPARISON_DIR,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"analysis_dir={out_dir}")
+    print(f"analysis_dir={out_dir} result_count={len(grouped)} csv_outputs={len(outputs)}")
 
 
 def main():

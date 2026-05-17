@@ -26,8 +26,8 @@ from data_tools.vcot_crop_lmdb import (  # noqa: E402
 )
 
 
-DEFAULT_SUMMARY_CSV = REPO_ROOT / "rescore_result/vcot_grasp_summary_analysis/summary.csv"
-DEFAULT_OUT_DIR = REPO_ROOT / "rescore_result/vcot_grasp_summary_analysis/analysis"
+DEFAULT_SUMMARY_CSV = REPO_ROOT / "rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/summary.csv"
+DEFAULT_OUT_DIR = REPO_ROOT / "rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/analysis"
 DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
 DEFAULT_MASK_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/mask").resolve()
 IMAGE_SIZE = 416
@@ -36,7 +36,7 @@ COORDS = ["x", "y", "w", "h", "angle"]
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Diagnose whether oracle crop_image results benefit from a strong local-coordinate prior."
+        description="Write an oracle-crop summary diagnosis for the crop-frame constant-prior baseline."
     )
     parser.add_argument("--summary-csv", default=str(DEFAULT_SUMMARY_CSV))
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
@@ -282,7 +282,7 @@ def diagnose_result(
     image_size: int,
     iou_threshold: float,
     angle_threshold: float,
-) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+) -> dict[str, Any]:
     result_path = Path(row["result_path"])
     data = read_json(result_path)
     outputs = data.get("outputs", [])
@@ -293,7 +293,6 @@ def diagnose_result(
     any_clamped = 0
     constant_official = 0
     constant_top1 = 0
-    sample_rows = []
 
     for output in outputs:
         crop_box = output["crop_box"]
@@ -307,40 +306,11 @@ def diagnose_result(
         const_top1_success = top1_success(pred_full, labels, iou_threshold, angle_threshold)
         constant_official += int(const_official_success)
         constant_top1 += int(const_top1_success)
-
-        sample_row: dict[str, Any] = {
-            "method": row["method"],
-            "experiment": row["experiment"],
-            "split": row["split"],
-            "result_path": str(result_path),
-            "grasp_id": output.get("grasp_id", ""),
-            "obj_name": output.get("obj_name", ""),
-            "model_official_success": int(bool(output.get("vcot_success"))),
-            "model_top1_success": int(bool(output.get("vcot_top1_success"))),
-            "constant_train_mean_official_success": int(const_official_success),
-            "constant_train_mean_top1_success": int(const_top1_success),
-            "crop_x0": crop_box[0],
-            "crop_y0": crop_box[1],
-            "crop_x1": crop_box[2],
-            "crop_y1": crop_box[3],
-            "crop_w": crop_box[2] - crop_box[0],
-            "crop_h": crop_box[3] - crop_box[1],
-            "target_full_x": grasp[0],
-            "target_full_y": grasp[1],
-            "target_full_w": grasp[2],
-            "target_full_h": grasp[3],
-            "target_full_angle": grasp[4],
-            "crop_any_xywh_clamped": int(any_xywh_clamped(flags)),
-        }
         for coord, value, raw_value in zip(COORDS, crop_norm, raw):
             values_by_coord[coord].append(float(value))
             raw_by_coord[coord].append(float(raw_value))
             clamp_counts[f"{coord}_clamped"] += int(flags[f"{coord}_clamped"])
-            sample_row[f"target_crop_{coord}"] = value
-            sample_row[f"raw_crop_{coord}"] = raw_value
-            sample_row[f"{coord}_clamped"] = int(flags[f"{coord}_clamped"])
         any_clamped += int(any_xywh_clamped(flags))
-        sample_rows.append(sample_row)
 
     total = len(outputs)
     summary: dict[str, Any] = {
@@ -366,7 +336,7 @@ def diagnose_result(
         summary[f"test_{coord}_clamped_rate"] = clamp_counts[f"{coord}_clamped"] / total if total else 0.0
         summary.update(prefixed_stats(f"test_target_crop_{coord}", values_by_coord[coord]))
         summary.update(prefixed_stats(f"test_raw_crop_{coord}", raw_by_coord[coord]))
-    return summary, sample_rows
+    return summary
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -379,6 +349,17 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
+
+
+def update_manifest(out_dir: Path, output_path: Path) -> None:
+    manifest_path = out_dir / "manifest.json"
+    if not manifest_path.exists():
+        return
+    manifest = read_json(manifest_path)
+    outputs = set(manifest.get("outputs", []))
+    outputs.add(str(output_path.relative_to(out_dir)))
+    manifest["outputs"] = sorted(outputs)
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 def main() -> None:
@@ -406,7 +387,6 @@ def main() -> None:
 
     train_cache: dict[str, tuple[list[float], dict[str, Any]]] = {}
     summary_rows = []
-    sample_rows = []
     with grasp_env.begin() as grasp_txn, mask_env.begin() as mask_txn:
         for row in rows:
             config_path = Path(row["loaded_vcot_config"])
@@ -426,7 +406,7 @@ def main() -> None:
                     sample_limit=args.sample_limit,
                 )
             train_mean, train_summary = train_cache[cache_key]
-            result_summary, result_samples = diagnose_result(
+            result_summary = diagnose_result(
                 row=row,
                 train_mean=train_mean,
                 train_summary=train_summary,
@@ -436,14 +416,11 @@ def main() -> None:
                 angle_threshold=args.angle_threshold,
             )
             summary_rows.append(result_summary)
-            sample_rows.extend(result_samples)
 
-    summary_path = out_dir / "crop_frame_prior_summary.csv"
-    samples_path = out_dir / "crop_frame_prior_samples.csv"
+    summary_path = out_dir / "oracle_crop" / "crop_frame_prior_summary.csv"
     write_csv(summary_path, summary_rows)
-    write_csv(samples_path, sample_rows)
+    update_manifest(out_dir, summary_path)
     print(f"wrote {summary_path}")
-    print(f"wrote {samples_path}")
 
 
 if __name__ == "__main__":

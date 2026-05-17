@@ -192,6 +192,7 @@ def write_summary_csv(rows: list[dict], path: Path):
         "output_path",
         "method",
         "experiment",
+        "split",
         "evaluation_mode",
         "checkpoint",
         "loaded_vcot_config",
@@ -223,6 +224,41 @@ def write_summary_csv(rows: list[dict], path: Path):
             writer.writerow({field: row.get(field, "") for field in fieldnames})
 
 
+def print_final_summary(
+    rows: list[dict],
+    summary_csv: Path | None,
+    analysis_out_dir: str | None,
+):
+    result_count = len(rows)
+    total = sum(int(row.get("total", 0)) for row in rows)
+    valid = sum(int(row.get("valid", 0)) for row in rows)
+    success = sum(int(row.get("vcot_success", 0)) for row in rows)
+    top1_success = sum(int(row.get("vcot_top1_success", 0)) for row in rows)
+
+    print(
+        "rescore_summary: "
+        f"results={result_count} total={total} valid={valid} "
+        f"official={success / total * 100 if total else 0.0:.2f}% "
+        f"top1={top1_success / total * 100 if total else 0.0:.2f}%"
+    )
+
+    for method, split in sorted({(row.get("method", ""), row.get("split", "")) for row in rows}):
+        subset = [row for row in rows if row.get("method", "") == method and row.get("split", "") == split]
+        subset_total = sum(int(row.get("total", 0)) for row in subset)
+        best_official = max((float(row.get("vcot_success_rate_all", 0.0)) for row in subset), default=0.0)
+        best_top1 = max((float(row.get("vcot_top1_success_rate_all", 0.0)) for row in subset), default=0.0)
+        print(
+            "rescore_summary_group: "
+            f"method={method} split={split} results={len(subset)} total={subset_total} "
+            f"best_official={best_official * 100:.2f}% best_top1={best_top1 * 100:.2f}%"
+        )
+
+    if summary_csv is not None:
+        print(f"summary_csv={summary_csv}")
+    if analysis_out_dir:
+        print(f"analysis_out_dir={analysis_out_dir}")
+
+
 def main():
     args = parse_args()
     if args.write and args.out_dir:
@@ -247,6 +283,7 @@ def main():
             "output_path": str(written_path) if written_path else "",
             "method": manifest_info.get("method", ""),
             "experiment": manifest_info.get("experiment", ""),
+            "split": manifest_info.get("split", ""),
             "evaluation_mode": manifest_info.get("evaluation_mode", ""),
             "checkpoint": manifest_info.get("latest_checkpoint", ""),
             "loaded_vcot_config": manifest_info.get("loaded_vcot_config", ""),
@@ -258,30 +295,17 @@ def main():
             "valid": valid,
             **metrics,
         })
-        print(path)
-        print(f"  total={total} valid={valid}")
-        print(f"  vcot_success={metrics['vcot_success']}")
-        print(f"  vcot_success_rate_all={metrics['vcot_success_rate_all'] * 100:.2f}%")
-        print(f"  vcot_success_rate_valid={metrics['vcot_success_rate_valid'] * 100:.2f}%")
-        print(f"  vcot_top1_success_rate_all={metrics['vcot_top1_success_rate_all'] * 100:.2f}%")
-        print(f"  target_label_count_mean={metrics['target_label_count_mean']:.2f}")
-        print(f"  vcot_joint_iou_mean={metrics['vcot_joint_iou_mean']:.4f}")
-        print(f"  vcot_joint_angle_diff_mean={metrics['vcot_joint_angle_diff_mean']:.4f}")
-        if written_path:
-            print(f"  saved={written_path}")
 
     summary_csv = Path(args.summary_csv) if args.summary_csv else None
     if summary_csv is None and args.out_dir:
         summary_csv = Path(args.out_dir) / "summary.csv"
     if summary_csv is not None:
         write_summary_csv(summary_rows, summary_csv)
-        print(f"summary_csv={summary_csv}")
 
     if args.analysis_out_dir:
         env.close()
         from analyze_grasp_results import run_analysis
 
-        print(f"analysis_out_dir={args.analysis_out_dir}")
         run_analysis(
             results=analysis_paths,
             out_dir=args.analysis_out_dir,
@@ -291,6 +315,8 @@ def main():
             angle_threshold=args.angle_threshold,
             image_size=args.image_size,
         )
+
+    print_final_summary(summary_rows, summary_csv, args.analysis_out_dir)
 
 
 if __name__ == "__main__":
