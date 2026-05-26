@@ -60,6 +60,7 @@ def parse_args() -> argparse.Namespace:
     vcot.add_argument("--bbox-root", default=str(DEFAULT_BBOX_ROOT))
     vcot.add_argument("--eval-splits", nargs="+", default=["test_seen", "test_unseen"])
     vcot.add_argument("--bbox-ratio", type=float, default=0.5)
+    vcot.add_argument("--bbox-loss-weight", type=float, default=1.0)
     vcot.add_argument("--bbox-edge-expand", type=int, default=DEFAULT_BBOX_EDGE_EXPAND)
     vcot.add_argument("--min-bbox-half-size", type=int, default=DEFAULT_MIN_BBOX_HALF_SIZE)
     vcot.add_argument("--target-coordinate-frame", choices=["full_image", "crop_image"], default="full_image")
@@ -312,6 +313,7 @@ def write_vcot_meta(
     crop_length: int,
     bbox_length: int,
     bbox_ratio: float,
+    bbox_loss_weight: float,
     bbox_edge_expand: int,
     min_bbox_half_size: int,
     target_coordinate_frame: str,
@@ -332,6 +334,7 @@ def write_vcot_meta(
             "vcot_bbox_edge_expand": bbox_edge_expand,
             "vcot_min_bbox_half_size": min_bbox_half_size,
             "vcot_target_grasp_index": target_grasp_index,
+            "vcot_loss_weight": 1.0,
         },
         "grasp_anything_bbox_train": {
             "root": "",
@@ -343,6 +346,7 @@ def write_vcot_meta(
             "vcot_image_size": 416,
             "vcot_target_coordinate_frame": "full_image",
             "vcot_target_bbox_order": "xyxy",
+            "vcot_loss_weight": float(bbox_loss_weight),
         },
     }
     meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -417,6 +421,7 @@ def ensure_vcot(args: argparse.Namespace) -> None:
         crop_length,
         bbox_length,
         args.bbox_ratio,
+        args.bbox_loss_weight,
         args.bbox_edge_expand,
         args.min_bbox_half_size,
         args.target_coordinate_frame,
@@ -463,6 +468,7 @@ def ensure_all(args: argparse.Namespace) -> None:
             _lr,
             _epochs,
             bbox_ratio,
+            bbox_loss_weight,
             edge_expand,
             min_half,
             target_frame,
@@ -478,6 +484,7 @@ def ensure_all(args: argparse.Namespace) -> None:
             bbox_root=SETTINGS["GRASP_BBOX_INDEX_ROOT"],
             eval_splits=eval_splits,
             bbox_ratio=float(bbox_ratio),
+            bbox_loss_weight=float(bbox_loss_weight),
             bbox_edge_expand=int(edge_expand),
             min_bbox_half_size=int(min_half),
             target_coordinate_frame=target_frame,

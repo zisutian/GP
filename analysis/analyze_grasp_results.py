@@ -63,6 +63,9 @@ class ResultInfo:
     bbox_edge_expand: str = ""
     min_bbox_half_size: str = ""
     target_grasp_index: str = ""
+    bbox_ratio: str = ""
+    grasp_loss_weight: str = ""
+    bbox_loss_weight: str = ""
     loaded_vcot_config: str = ""
 
 
@@ -174,6 +177,9 @@ def infer_info(path: Path, total: int, parsed: int) -> ResultInfo:
         bbox_edge_expand=csv_value(manifest_info.get("bbox_edge_expand", "")),
         min_bbox_half_size=csv_value(manifest_info.get("min_bbox_half_size", "")),
         target_grasp_index=csv_value(manifest_info.get("target_grasp_index", "")),
+        bbox_ratio=csv_value(manifest_info.get("bbox_ratio", "")),
+        grasp_loss_weight=csv_value(manifest_info.get("grasp_loss_weight", "")),
+        bbox_loss_weight=csv_value(manifest_info.get("bbox_loss_weight", "")),
         loaded_vcot_config=csv_value(manifest_info.get("loaded_vcot_config", "")),
     )
 
@@ -380,6 +386,9 @@ def write_main_summary(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[
             "bbox_edge_expand": info.bbox_edge_expand,
             "min_bbox_half_size": info.min_bbox_half_size,
             "target_grasp_index": info.target_grasp_index,
+            "bbox_ratio": info.bbox_ratio,
+            "grasp_loss_weight": info.grasp_loss_weight,
+            "bbox_loss_weight": info.bbox_loss_weight,
             "loaded_vcot_config": info.loaded_vcot_config,
             "result_path": str(info.path),
             "total": info.total,
@@ -409,6 +418,9 @@ def write_main_summary(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[
         "bbox_edge_expand",
         "min_bbox_half_size",
         "target_grasp_index",
+        "bbox_ratio",
+        "grasp_loss_weight",
+        "bbox_loss_weight",
         "total",
         "parsed",
         "parse_rate",
@@ -914,6 +926,9 @@ def write_predicted_vcot_diagnostics(
                 "bbox_edge_expand": info.bbox_edge_expand,
                 "min_bbox_half_size": info.min_bbox_half_size,
                 "target_grasp_index": info.target_grasp_index,
+                "bbox_ratio": info.bbox_ratio,
+                "grasp_loss_weight": info.grasp_loss_weight,
+                "bbox_loss_weight": info.bbox_loss_weight,
                 "total": total,
                 "bbox_parse_rate": bbox_parsed / total if total else 0.0,
                 "parse_rate": parsed / total if total else 0.0,
@@ -964,6 +979,9 @@ def write_predicted_vcot_diagnostics(
         "bbox_edge_expand",
         "min_bbox_half_size",
         "target_grasp_index",
+        "bbox_ratio",
+        "grasp_loss_weight",
+        "bbox_loss_weight",
         "total",
         "bbox_parse_rate",
         "parse_rate",

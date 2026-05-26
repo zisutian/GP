@@ -30,6 +30,7 @@ def parse_args():
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--eval-splits", nargs="+", default=["test_seen", "test_unseen"])
     parser.add_argument("--bbox-ratio", type=float, default=0.5)
+    parser.add_argument("--bbox-loss-weight", type=float, default=1.0)
     parser.add_argument("--bbox-edge-expand", type=int, default=DEFAULT_BBOX_EDGE_EXPAND)
     parser.add_argument("--min-bbox-half-size", type=int, default=DEFAULT_MIN_BBOX_HALF_SIZE)
     parser.add_argument("--target-coordinate-frame", choices=["full_image", "crop_image"], default="full_image")
@@ -137,6 +138,7 @@ def main():
             "vcot_bbox_edge_expand": args.bbox_edge_expand,
             "vcot_min_bbox_half_size": args.min_bbox_half_size,
             "vcot_target_grasp_index": args.target_grasp_index,
+            "vcot_loss_weight": 1.0,
         },
         "grasp_anything_bbox_train": {
             "root": "",
@@ -148,6 +150,7 @@ def main():
             "vcot_image_size": 416,
             "vcot_target_coordinate_frame": "full_image",
             "vcot_target_bbox_order": "xyxy",
+            "vcot_loss_weight": args.bbox_loss_weight,
         },
     }
     meta_path = output_root / "internvl_meta_train.json"
@@ -159,7 +162,11 @@ def main():
         f"bbox_edge_expand={args.bbox_edge_expand}, "
         f"min_bbox_half_size={args.min_bbox_half_size}"
     )
-    print(f"bbox train: {bbox_length} rows, ratio={bbox_repeat_time}, effective={int(bbox_length * bbox_repeat_time)}")
+    print(
+        "bbox train: "
+        f"{bbox_length} rows, ratio={bbox_repeat_time}, "
+        f"loss_weight={args.bbox_loss_weight}, effective={int(bbox_length * bbox_repeat_time)}"
+    )
     print(f"meta: {meta_path}")
 
 

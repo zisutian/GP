@@ -224,6 +224,9 @@ def apply_vcot_config(args):
     )
     if args.max_num is None:
         args.max_num = int(config.get("max_dynamic_patch") or 6)
+    args.bbox_ratio = config.get("bbox_ratio")
+    args.grasp_loss_weight = config.get("grasp_loss_weight")
+    args.bbox_loss_weight = config.get("bbox_loss_weight")
     if args.data_index_root is None:
         if not config.get("data_index_root"):
             raise ValueError(f"{config_path} is missing data_index_root.")
@@ -643,6 +646,9 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
             "bbox_edge_expand": args.bbox_edge_expand,
             "min_bbox_half_size": args.min_bbox_half_size,
             "target_grasp_index": args.target_grasp_index,
+            "bbox_ratio": args.bbox_ratio,
+            "grasp_loss_weight": args.grasp_loss_weight,
+            "bbox_loss_weight": args.bbox_loss_weight,
             "loaded_vcot_config": args.loaded_vcot_config,
         })
         for output in outputs:

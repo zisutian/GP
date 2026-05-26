@@ -87,6 +87,24 @@ def check_crop_config(
         raise ValueError(f"Crop data index config mismatch: {path}\n" + "\n".join(errors))
 
 
+def check_vcot_loss_weight(meta_path: Path, expected_bbox_loss_weight: float | None) -> None:
+    if expected_bbox_loss_weight is None:
+        return
+    meta = read_json(meta_path)
+    bbox_meta = next(
+        (entry for entry in meta.values() if entry.get("vcot_dataset") == "grasp_anything_bbox"),
+        {},
+    )
+    actual = bbox_meta.get("vcot_loss_weight")
+    if actual is None and float(expected_bbox_loss_weight) == 1.0:
+        return
+    if actual is None or float(actual) != float(expected_bbox_loss_weight):
+        raise ValueError(
+            f"VCoT bbox loss weight mismatch: {meta_path}\n"
+            f"expected {expected_bbox_loss_weight!r}, got {actual!r}"
+        )
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Check existing Grasp-Anything data_index/meta files without generating them.")
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -116,6 +134,7 @@ def parse_args() -> argparse.Namespace:
     vcot.add_argument("--crop-root", required=True)
     vcot.add_argument("--bbox-root", default=SETTINGS["GRASP_BBOX_INDEX_ROOT"])
     vcot.add_argument("--eval-splits", nargs="+", default=[])
+    vcot.add_argument("--bbox-loss-weight", type=float, default=None)
     vcot.add_argument("--bbox-edge-expand", type=int, required=True)
     vcot.add_argument("--min-bbox-half-size", type=int, required=True)
     vcot.add_argument("--target-coordinate-frame", choices=[TARGET_FRAME_FULL_IMAGE, TARGET_FRAME_CROP_IMAGE], required=True)
@@ -175,12 +194,14 @@ def check_vcot(
     min_bbox_half_size: int,
     target_coordinate_frame: str,
     target_grasp_index: int,
+    bbox_loss_weight: float | None = None,
 ) -> None:
     meta = Path(meta_path).expanduser().resolve()
     root = Path(data_index_root).expanduser().resolve()
     crop = Path(crop_root).expanduser().resolve()
     bbox = Path(bbox_root).expanduser().resolve()
     check_meta(meta)
+    check_vcot_loss_weight(meta, bbox_loss_weight)
     check_splits(root, eval_splits)
     check_crop_config(
         crop / "train.jsonl",
@@ -218,6 +239,7 @@ def check_all(splits: list[str], eval_splits: list[str]) -> None:
             _lr,
             _epochs,
             _bbox_ratio,
+            bbox_loss_weight,
             edge_expand,
             min_half,
             target_frame,
@@ -235,6 +257,7 @@ def check_all(splits: list[str], eval_splits: list[str]) -> None:
             int(min_half),
             target_frame,
             int(target_grasp_index),
+            float(bbox_loss_weight),
         )
 
 
@@ -265,6 +288,7 @@ def main() -> None:
             args.min_bbox_half_size,
             args.target_coordinate_frame,
             args.target_grasp_index,
+            args.bbox_loss_weight,
         )
     elif args.command == "all":
         check_all(args.splits, args.eval_splits)

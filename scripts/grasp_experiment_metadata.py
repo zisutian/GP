@@ -32,6 +32,7 @@ def parse_args():
     write.add_argument("--max-dynamic-patch", type=int, default=None)
     write.add_argument("--force-image-size", type=int, default=None)
     write.add_argument("--bbox-ratio", type=float, default=None)
+    write.add_argument("--bbox-loss-weight", type=float, default=None)
     write.add_argument("--target-coordinate-frame", default=None)
     write.add_argument("--bbox-edge-expand", type=int, default=None)
     write.add_argument("--min-bbox-half-size", type=int, default=None)
@@ -155,6 +156,15 @@ def build_config(args: argparse.Namespace) -> dict[str, Any]:
             first_not_none(args.bbox_ratio, bbox_meta.get("repeat_time")),
             str(meta_path),
             "bbox_ratio/repeat_time",
+        ))
+        config["grasp_loss_weight"] = float(first_not_none(
+            crop_meta.get("vcot_loss_weight"),
+            default=1.0,
+        ))
+        config["bbox_loss_weight"] = float(first_not_none(
+            args.bbox_loss_weight,
+            bbox_meta.get("vcot_loss_weight"),
+            default=1.0,
         ))
 
     return config

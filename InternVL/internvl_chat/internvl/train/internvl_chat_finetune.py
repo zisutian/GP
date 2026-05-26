@@ -359,6 +359,9 @@ class LazySupervisedDataset(Dataset):
         self.root = meta['root']
         self.vcot_dataset = meta.get('vcot_dataset')
         self.vcot_image_size = meta.get('vcot_image_size', 416)
+        self.vcot_loss_weight = meta.get('vcot_loss_weight', meta.get('loss_weight'))
+        if self.vcot_loss_weight is not None:
+            self.vcot_loss_weight = float(self.vcot_loss_weight)
         self.vcot_bbox_edge_expand = None
         self.vcot_min_bbox_half_size = None
         self.vcot_target_coordinate_frame = None
@@ -448,6 +451,14 @@ class LazySupervisedDataset(Dataset):
                                     pad2square=self.pad2square, normalize_type=self.normalize_type)
         return transform
 
+    def apply_task_loss_weight(self, ret):
+        if self.vcot_loss_weight is None:
+            return ret
+        loss_weight = torch.zeros_like(ret['labels'], dtype=torch.float32)
+        loss_weight[ret['labels'] != IGNORE_INDEX] = self.vcot_loss_weight
+        ret['loss_weight'] = loss_weight
+        return ret
+
     def multi_modal_get_item(self, data_item):
         # Build transformation function
         transform = self.get_transform()
@@ -504,7 +515,7 @@ class LazySupervisedDataset(Dataset):
             pixel_values=pixel_values,
             image_flags=torch.tensor([1] * num_patches, dtype=torch.long)
         )
-        return ret
+        return self.apply_task_loss_weight(ret)
 
     def multi_modal_multi_image_get_item(self, data_item):
         # Build transformation function
@@ -557,7 +568,7 @@ class LazySupervisedDataset(Dataset):
             pixel_values=pixel_values,
             image_flags=torch.tensor([1] * num_patches, dtype=torch.long)
         )
-        return ret
+        return self.apply_task_loss_weight(ret)
 
     def video_get_item(self, data_item):
         # Build transformation function
@@ -613,7 +624,7 @@ class LazySupervisedDataset(Dataset):
             pixel_values=pixel_values,
             image_flags=torch.tensor([1] * num_patches, dtype=torch.long)
         )
-        return ret
+        return self.apply_task_loss_weight(ret)
 
     def pure_text_get_item(self, data_item):
         # Build transformation function
@@ -656,7 +667,7 @@ class LazySupervisedDataset(Dataset):
             pixel_values=pixel_values,
             image_flags=torch.tensor([0] * num_patches, dtype=torch.long)
         )
-        return ret
+        return self.apply_task_loss_weight(ret)
 
     def _enable_worker_distributed(self):
         if (
