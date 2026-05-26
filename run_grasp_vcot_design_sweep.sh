@@ -15,16 +15,18 @@ PYTHON_BIN="${PYTHON_BIN:-${GRASP_PYTHON_BIN}}"
 
 FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-${GRASP_VCOT_TRAIN_SCRIPT}}"
+EVAL_SCRIPT="${EVAL_SCRIPT:-${GRASP_VCOT_EVAL_SCRIPT}}"
 
 export CUDA_VISIBLE_DEVICES
 
 require_vcot_data() {
   local name="$1"
   local bbox_ratio="$2"
-  local edge_expand="$3"
-  local min_half="$4"
-  local target_frame="$5"
-  local target_grasp_index="$6"
+  local bbox_loss_weight="$3"
+  local edge_expand="$4"
+  local min_half="$5"
+  local target_frame="$6"
+  local target_grasp_index="$7"
   local meta_root="${GRASP_VCOT_INDEX_ROOT}/${name}"
   local crop_root="${meta_root}/crop"
   local meta_path="${meta_root}/internvl_meta_train.json"
@@ -42,6 +44,7 @@ require_vcot_data() {
     --data-index-root "${meta_root}"
     --crop-root "${crop_root}"
     --bbox-root "${GRASP_BBOX_INDEX_ROOT}"
+    --bbox-loss-weight "${bbox_loss_weight}"
     --bbox-edge-expand "${edge_expand}"
     --min-bbox-half-size "${min_half}"
     --target-coordinate-frame "${target_frame}"
@@ -56,16 +59,17 @@ require_vcot_data() {
 write_config() {
   local name="$1"
   local bbox_ratio="$2"
-  local edge_expand="$3"
-  local min_half="$4"
-  local target_frame="$5"
-  local max_dynamic_patch="$6"
-  local meta_path="$7"
-  local work_dir="$8"
-  local use_lora="$9"
-  local learning_rate="${10}"
-  local epochs="${11}"
-  local target_grasp_index="${12}"
+  local bbox_loss_weight="$3"
+  local edge_expand="$4"
+  local min_half="$5"
+  local target_frame="$6"
+  local max_dynamic_patch="$7"
+  local meta_path="$8"
+  local work_dir="$9"
+  local use_lora="${10}"
+  local learning_rate="${11}"
+  local epochs="${12}"
+  local target_grasp_index="${13}"
   local data_index_root="${GRASP_VCOT_INDEX_ROOT}/${name}"
   local crop_root="${GRASP_VCOT_INDEX_ROOT}/${name}/crop"
 
@@ -83,6 +87,7 @@ write_config() {
     --max-dynamic-patch "${max_dynamic_patch}" \
     --force-image-size "${FORCE_IMAGE_SIZE}" \
     --bbox-ratio "${bbox_ratio}" \
+    --bbox-loss-weight "${bbox_loss_weight}" \
     --bbox-edge-expand "${edge_expand}" \
     --min-bbox-half-size "${min_half}" \
     --target-coordinate-frame "${target_frame}" \
@@ -96,11 +101,12 @@ run_experiment() {
   local learning_rate="$3"
   local epochs="$4"
   local bbox_ratio="$5"
-  local edge_expand="$6"
-  local min_half="$7"
-  local target_frame="$8"
-  local max_dynamic_patch="$9"
-  local target_grasp_index="${10}"
+  local bbox_loss_weight="$6"
+  local edge_expand="$7"
+  local min_half="$8"
+  local target_frame="$9"
+  local max_dynamic_patch="${10}"
+  local target_grasp_index="${11}"
   local crop_root="${GRASP_VCOT_INDEX_ROOT}/${name}/crop"
   local work_dir="${GRASP_VCOT_RUN_ROOT}/${name}"
   local out_dir="${GRASP_VCOT_RESULT_ROOT}/${name}"
@@ -114,7 +120,7 @@ run_experiment() {
   meta_path="${GRASP_VCOT_INDEX_ROOT}/${name}/internvl_meta_train.json"
 
   stage "data check"
-  require_vcot_data "${name}" "${bbox_ratio}" "${edge_expand}" "${min_half}" "${target_frame}" "${target_grasp_index}"
+  require_vcot_data "${name}" "${bbox_ratio}" "${bbox_loss_weight}" "${edge_expand}" "${min_half}" "${target_frame}" "${target_grasp_index}"
 
   stage "train"
   action="$(training_action "${work_dir}" "${overwrite_output_dir}")"
@@ -132,6 +138,7 @@ run_experiment() {
     NUM_TRAIN_EPOCHS="${epochs}" \
     MAX_DYNAMIC_PATCH="${max_dynamic_patch}" \
     BBOX_RATIO="${bbox_ratio}" \
+    BBOX_LOSS_WEIGHT="${bbox_loss_weight}" \
     BBOX_EDGE_EXPAND="${edge_expand}" \
     MIN_BBOX_HALF_SIZE="${min_half}" \
     TARGET_COORDINATE_FRAME="${target_frame}" \
@@ -152,7 +159,7 @@ run_experiment() {
   fi
 
   stage "config"
-  write_config "${name}" "${bbox_ratio}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${meta_path}" "${work_dir}" "${use_lora}" "${learning_rate}" "${epochs}" "${target_grasp_index}"
+  write_config "${name}" "${bbox_ratio}" "${bbox_loss_weight}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${meta_path}" "${work_dir}" "${use_lora}" "${learning_rate}" "${epochs}" "${target_grasp_index}"
 
   if should_run_eval; then
     stage "eval"
@@ -174,9 +181,10 @@ run_experiment() {
     fi
     WORK_DIR="${work_dir}" \
     OUT_DIR="${out_dir}" \
+    CUDA_VISIBLE_DEVICES="${GRASP_VCOT_EVAL_CUDA_VISIBLE_DEVICES}" \
     GPUS="${GRASP_EVAL_GPUS}" \
     DATASETS="${eval_datasets}" \
-    bash "${GP_ROOT}/eval/eval_grasp_vcot_lmdb_lora.sh" \
+    bash "${EVAL_SCRIPT}" \
       2>&1 | tee -a "${out_dir}/${name}.eval.log"
   else
     stage "eval"
@@ -184,6 +192,6 @@ run_experiment() {
   fi
 }
 
-while IFS=$'\t' read -r name use_lora learning_rate epochs bbox_ratio edge_expand min_half target_frame max_dynamic_patch target_grasp_index; do
-  run_experiment "${name}" "${use_lora}" "${learning_rate}" "${epochs}" "${bbox_ratio}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${target_grasp_index}"
+while IFS=$'\t' read -r name use_lora learning_rate epochs bbox_ratio bbox_loss_weight edge_expand min_half target_frame max_dynamic_patch target_grasp_index; do
+  run_experiment "${name}" "${use_lora}" "${learning_rate}" "${epochs}" "${bbox_ratio}" "${bbox_loss_weight}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${target_grasp_index}"
 done < <("${PYTHON_BIN}" "${GP_ROOT}/grasp_settings.py" experiments vcot)

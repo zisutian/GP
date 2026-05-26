@@ -48,17 +48,35 @@ data_index:
 
 internvl_meta_train.json:
   InternVL 训练入口读取的数据集配置。
-  它指向 data_index，并声明 vcot_dataset、repeat_time、crop 参数等。
+  它指向 data_index，并声明 vcot_dataset、repeat_time、vcot_loss_weight、crop 参数等。
 
 vcot_config.json:
   每个实验/checkpoint 的可回溯配置。
-  eval/analysis 依赖它确认 pipeline、data_index_root、meta_path、crop 参数、bbox_ratio 等。
+  eval/analysis 依赖它确认 pipeline、data_index_root、meta_path、crop 参数、bbox_ratio、bbox_loss_weight 等。
 ```
 
 路径和实验名统一从根目录 `grasp_settings.py` 生成。shell 入口只 source
-根目录 `grasp_paths.sh`，不再各自维护路径。`scripts/` 只保留数据准备、配置写入和通用运行函数。
+根目录 `grasp_paths.sh`，不再各自维护路径。`scripts/` 只保留实验元数据写入和
+训练/eval/sweep 运行期 helper；数据索引生成统一在 `data_tools/`。
 实验表按“实验名 + 显式参数”写在 `DIRECT_EXPERIMENTS / CROP_EXPERIMENTS /
 VCOT_EXPERIMENTS` 中；脚本不会从实验名反解析参数。
+
+配置层级原则：
+
+```text
+grasp_settings.py:
+  唯一默认配置源。长期配置、实验表、GPU、路径、eval split/threshold/port 都在这里改。
+
+run_grasp_*.sh:
+  编排层。读取 GRASP_* 配置，做 data check、checkpoint/result 跳过判断，并把解析后的
+  具体参数传给 train/eval。
+
+train/eval shell:
+  执行层。被 run 层调用时使用 run 层传入的具体参数；单独运行时才回退到 GRASP_* 默认值。
+```
+
+环境变量覆盖只用于一次性运行或 run -> train/eval 的层间传参；可复现实验的默认值应写回
+`grasp_settings.py`。
 
 ```text
 DATASET_ROOT       原始 Grasp-Anything 数据根目录
@@ -194,7 +212,7 @@ conda run --no-capture-output -n 260513-internvl bash run_grasp_vcot_design_swee
 sweep 的行为：
 
 ```text
-1. ensure manifest/meta
+1. 检查 data_index/meta；缺失时报错，需先显式运行 data stage
 2. 检查 work_dir 是否已有 checkpoint
 3. 缺 checkpoint 则训练
 4. 写/复制 vcot_config.json
@@ -227,8 +245,17 @@ sweep -> train script -> vcot_config.json 使用同一组参数：
   data_index_root / meta_path / crop_root / bbox_root
   use_llm_lora / learning_rate / num_train_epochs
   max_dynamic_patch / force_image_size
-  bbox_ratio / bbox_edge_expand / min_bbox_half_size
+  bbox_ratio / bbox_loss_weight / bbox_edge_expand / min_bbox_half_size
   target_coordinate_frame / target_grasp_index
+
+predicted_vcot 的联合训练损失写作:
+  L = L_grasp + bbox_loss_weight * L_bbox
+
+其中 `bbox_ratio` 只控制 bbox 数据集的 `repeat_time`/采样配比，`bbox_loss_weight`
+才是 bbox token loss 的显式权重。VCoT 以 crop 实验中更优的 `crop_image`
+坐标系为主基准：`baseline_frame_*`。当前配置围绕该 frame baseline 做
+`bbox_ratio in {0.25, 0.5, 1.0}` 和 `bbox_loss_weight in {0.5, 1.0, 2.0}`
+消融；`vcot_full_*` 系列只保留 `bbox_ratio` 对照，不做 lambda 调整。
 
 train 完成后会再次写 vcot_config.json，并复制到所有 checkpoint-* 下。
 eval 只需要 checkpoint；data_index_root 和 crop 参数从 checkpoint 的 vcot_config.json 读取。
@@ -251,7 +278,7 @@ lora16_lr4e-5_ep1_patch1
 当前 oracle crop design sweep 搜索范围：
 
 ```text
-crop_object_lora{r}_lr{lr}_ep{ep}_patch6_edge15_half50{g}
+baseline_full_lora{r}_lr{lr}_ep{ep}_patch6_edge15_half50{g}
 crop_full_lora{r}_lr{lr}_ep{ep}_patch6_edge5_half40{g}
 crop_full_lora{r}_lr{lr}_ep{ep}_patch6_edge10_half40{g}
 crop_frame_lora{r}_lr{lr}_ep{ep}_patch6_edge5_half40{g}
@@ -279,26 +306,35 @@ force_image_size = 448
 固定 checkpoint/result 目录名：
 
 ```text
+baseline_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.25
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox1.0
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5_lambda0.5
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5_lambda2.0
+vcot_frame_lora16_lr8e-5_ep1_patch6_edge10_half40_bbox0.5
+vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5
 vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.25
 vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.5
 vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox1.0
-vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5
-vcot_frame_lora16_lr8e-5_ep1_patch6_edge10_half40_bbox0.5
-vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5
 ```
 
-常用环境变量：
+临时运行覆盖：
 
 ```bash
 RUN_EVAL=0                     # 只训练，不 eval
 OVERWRITE_OUTPUT_DIR=True      # 强制重训
 OVERWRITE_EVAL_RESULTS=True    # 强制重评估
-EVAL_DATASETS=test_seen        # 只评估一个 split
+EVAL_DATASETS=test_seen        # sweep 只评估一个 split
+DATASETS=test_seen             # 单独 eval 只评估一个 split
 CUDA_VISIBLE_DEVICES=0,1
 GPUS=2
+BBOX_LOSS_WEIGHT=0.5           # 单独跑 predicted_vcot lambda 消融时覆盖 bbox loss 权重
 ```
 
-单独 eval：
+这些变量不是默认配置入口；需要长期保留的 GPU、split、threshold、port 或实验参数应改
+`grasp_settings.py`。
+
+单独 eval 轻量入口按 baseline 模板写死一组可改默认值，不读取 `grasp_settings.py`：
 
 ```bash
 conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_direct_lmdb_lora.sh
@@ -306,7 +342,7 @@ conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_crop_lmdb_
 conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_vcot_lmdb_lora.sh
 ```
 
-单独 eval 默认会从对应 `WORK_DIR` 找最新 `checkpoint-*`。也可以显式传：
+也可以用环境变量临时覆盖模板里的 baseline 路径：
 
 ```bash
 CHECKPOINT=/path/to/checkpoint-1 \
@@ -353,6 +389,8 @@ summary:
   min_bbox_half_size
   target_grasp_index
   bbox_ratio
+  grasp_loss_weight
+  bbox_loss_weight
 ```
 
 `pred_norm` 是归一化 grasp，rescore 会按 `image_size=416` 反归一化为
@@ -367,7 +405,9 @@ OUT_DIR=artifacts/results/vcot/{experiment} \
 conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_vcot_lmdb_lora.sh
 ```
 
-统一 rescore/analysis：
+## Analysis
+
+统一 analysis：
 
 ```bash
 conda run --no-capture-output -n 260513-internvl \
@@ -382,75 +422,66 @@ conda run --no-capture-output -n 260513-internvl \
   bash analysis/rescore_existing_grasp_results.sh
 ```
 
-输出目录：
+analysis 只读取已有 result JSON，不做模型推理，不改写原 result JSON。默认输出到
+`artifacts/analysis/`；具体 CSV/manifest 由 analysis 脚本生成，不在 README 中维护结果快照。
+
+analysis 输出组织：
 
 ```text
 artifacts/analysis/all/
   summary.csv
   checkpoint_manifest.csv
   README.md
-  overview/main_summary.csv
-  methods/direct_grasp/*.csv
-  methods/direct_grasp/sweeps/*.csv
-  methods/oracle_crop/*.csv
-  methods/oracle_crop/sweeps/*.csv
-  methods/oracle_crop/diagnostics/*.csv
-  methods/predicted_vcot/*.csv
-  methods/predicted_vcot/sweeps/*.csv
-  methods/predicted_vcot/diagnostics/*.csv
-  comparisons/direct_vs_oracle_crop.csv
-  comparisons/direct_vs_predicted_vcot.csv
   manifest.json
+  overview/
+  methods/
+    direct_grasp/
+    oracle_crop/
+    predicted_vcot/
+  comparisons/
 
 artifacts/analysis/direct_grasp/
   summary.csv
   checkpoint_manifest.csv
-  README.md
-  overview/main_summary.csv
-  methods/direct_grasp/*.csv
-  methods/direct_grasp/sweeps/*.csv
-  manifest.json
+  overview/
+  methods/direct_grasp/
 
 artifacts/analysis/oracle_crop/
   summary.csv
   checkpoint_manifest.csv
-  README.md
-  overview/main_summary.csv
-  methods/oracle_crop/*.csv
-  methods/oracle_crop/sweeps/*.csv
-  methods/oracle_crop/diagnostics/*.csv
-  manifest.json
+  overview/
+  methods/oracle_crop/
 
 artifacts/analysis/predicted_vcot/
   summary.csv
   checkpoint_manifest.csv
-  README.md
-  overview/main_summary.csv
-  methods/predicted_vcot/*.csv
-  methods/predicted_vcot/sweeps/*.csv
-  methods/predicted_vcot/diagnostics/*.csv
-  manifest.json
+  overview/
+  methods/predicted_vcot/
 ```
 
-目录语义：
+文件语义：
 
 ```text
-all:
-  全量跨任务汇总，包含 direct/oracle crop/predicted VCoT 以及跨任务对比表。
+summary.csv:
+  每个 result JSON 一行的指标汇总。
 
-direct_grasp:
-  只包含 direct_grasp，也就是原图直接预测 grasp。
+checkpoint_manifest.csv:
+  每个 result JSON 对应的 checkpoint、work_dir、data_index_root、metadata 路径。
 
-oracle_crop:
-  只包含 oracle_crop，也就是 GT mask crop upper bound。
+overview/:
+  当前 analysis 输入集合的总览表。
 
-predicted_vcot:
-  只包含 predicted_vcot，也就是预测 bbox -> predicted crop -> grasp 的二阶段闭环。
+methods/:
+  按 evaluation_mode 拆开的方法内 summary、误差统计、sweep、diagnostics。
+
+comparisons/:
+  跨方法的同 split 可配对样本对比；只有输入同时包含对应方法时才生成。
+
+manifest.json:
+  analysis 输入、阈值和输出文件清单。
 ```
 
-`analysis/rescore_existing_grasp_results.sh` 默认会刷新全量跨任务 analysis、
-三个单任务 analysis，并为 oracle crop 生成 crop-frame 常量先验诊断。
-可用这些开关控制：
+可用这些开关控制分析范围：
 
 ```bash
 RUN_TASK_DIRECT=False
@@ -460,268 +491,23 @@ RUN_CROP_FRAME_PRIOR=False
 CROP_FRAME_PRIOR_SAMPLE_LIMIT=0  # 0 表示使用完整 train annotation 估计常量先验；默认 5000
 ```
 
-rescore 参数契约：
-
-```text
-rescore 的本质:
-  不做模型推理
-  不加载 InternVL
-  不重新生成 answer
-  只读取已有 result JSON 的 outputs[].pred_norm / outputs[].grasp_id
-  从 summary.checkpoint / summary.loaded_vcot_config 追溯 checkpoint 和配置
-  从 LMDB 读取 GT positive grasp labels 后统一重算指标
-
-默认指标阈值:
-  vcot_iou_threshold = 0.25
-  vcot_angle_threshold = 30.0
-  image_size = 416
-
-默认不改写原 result JSON:
-  不传 --write
-  不传 --out-dir
-
-checkpoint_manifest.csv:
-  每一行来自 result JSON 的 summary.checkpoint 和 summary.loaded_vcot_config。
-  如果 checkpoint 或 config 不存在，manifest 生成会直接失败。
-
-coverage:
-  all 覆盖 artifacts/results/direct|crop|vcot 下所有 JSON。
-  direct_grasp 只覆盖 artifacts/results/direct 下的 JSON。
-  oracle_crop 只覆盖 artifacts/results/crop 下的 JSON。
-  predicted_vcot 只覆盖 artifacts/results/vcot 下的 JSON。
-```
-
-`analysis/score_vcot_grasp_results.py` 逐文件逻辑：
-
-```text
-1. 读取一个或多个 eval result JSON。
-2. 读取 outputs，并过滤 pred_norm is not None 的有效预测。
-3. 根据 grasp_id 从 grasp_label_positive LMDB 读取该样本所有 GT positive grasp labels。
-4. 将 pred_norm 反归一化到 416 尺度:
-     cx/cy/w/h = int(norm * 416)
-     angle = norm_angle * 180
-5. 对每个 GT label 计算 rotated rectangle IoU 和 circular angle diff。
-6. 写入或汇总:
-     vcot_success
-     vcot_success_rate_all
-     vcot_success_rate_valid
-     vcot_top1_success
-     vcot_top1_success_rate_all
-     vcot_top1_success_rate_valid
-     vcot_joint_iou_mean
-     vcot_joint_angle_diff_mean
-     vcot_best_iou_mean
-     vcot_best_angle_diff_mean
-     target_label_count_mean
-     target_label_count_max
-```
-
-official success 定义：
-
-```text
-任意 GT label 同时满足:
-  rotated IoU >= 0.25
-  circular angle diff <= 30 deg
-```
-
-top1 success 定义：
-
-```text
-只看第一个 GT label，同时满足:
-  rotated IoU >= 0.25
-  circular angle diff <= 30 deg
-```
-
-`score_vcot_grasp_results.py` 的输出控制：
-
-```text
---summary-csv:
-  输出 result 级汇总表，不输出样本级逐条明细。
-
---analysis-out-dir:
-  继续调用 analyze_grasp_results.run_analysis()，生成汇总型 analysis CSV。
-
---write:
-  将重算指标写回原 result JSON。
-
---out-dir:
-  在指定目录写 rescored JSON copy。
-
-默认 rescore_existing_grasp_results.sh 不传 --write / --out-dir，
-因此不会改写原 result JSON。
-```
-
-`analysis/analyze_grasp_results.py` 输出语义：
-
-```text
-overview/main_summary.csv:
-  当前 analysis 输入内每个 result 的主指标，包含 official/top1/strict/medium/loose/error mean 等。
-
-methods/{direct_grasp,oracle_crop,predicted_vcot}/main_summary.csv:
-  按方法拆分后的主指标。
-
-methods/{direct_grasp,oracle_crop,predicted_vcot}/error_stats.csv:
-  各误差指标的 mean/median/p75/p90。
-
-methods/{direct_grasp,oracle_crop,predicted_vcot}/sweeps/geometry.csv:
-  center/width-height/angle 阈值扫描。
-
-methods/{direct_grasp,oracle_crop,predicted_vcot}/sweeps/iou.csv:
-  IoU/angle 阈值扫描。
-
-comparisons/direct_vs_oracle_crop.csv:
-  direct/crop 在同 split 可配对样本上的交叉对比。
-
-comparisons/direct_vs_predicted_vcot.csv:
-  direct/predicted VCoT 在同 split 可配对样本上的交叉对比，包含 direct 成功
-  predicted 失败、direct 失败 predicted 成功、rescued/broken/net gain 等计数和比例。
-
-methods/oracle_crop/diagnostics/crop_quality_summary.csv:
-  crop 质量指标按 all/official_success/official_fail 聚合。
-
-methods/oracle_crop/diagnostics/crop_frame_prior_summary.csv:
-  oracle crop 的 crop-frame 常量均值先验诊断。它从训练集 crop-frame target grasp
-  估计一个常量均值向量，把该常量作为测试集预测反变换回原图后重新计算 official/top1，
-  用于验证 crop_image 模型是否只是利用固定局部坐标先验。
-
-methods/predicted_vcot/diagnostics/pipeline_summary.csv:
-  predicted VCoT 的 bbox/crop/object_coverage/good crop/bad crop 局部区域诊断。
-  当前会覆盖所有 pred_vcot result，包括最新 frame 配置
-  `vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5` 和
-  `vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5`。
-
-README.md:
-  当前 analysis 目录的指标和布局说明，会随 analysis 自动生成。
-
-manifest.json:
-  analysis 阈值、image_size、result_count 和输出文件清单。
-```
-
-analysis 每次从空输出目录重建，不保留或迁移旧版 analysis 文件；如果只输入单任务
-results，跨方法互相比对目录不会生成。
-
-`analysis/collect_checkpoint_manifest.py` 逻辑：
-
-```text
-从 result JSON summary 读取:
-  summary.checkpoint
-  summary.loaded_vcot_config
-  summary.evaluation_mode
-
-打开 loaded_vcot_config 读取:
-  experiment_name
-  output_dir
-
-oracle_crop / predicted_vcot 额外要求 result summary 里已有:
-  target_coordinate_frame
-  bbox_edge_expand
-  min_bbox_half_size
-  target_grasp_index
-
-输出:
-  checkpoint_manifest.csv
-
-失败策略:
-  checkpoint 不存在则失败
-  loaded_vcot_config 不存在则失败
-  evaluation_mode 缺失或不支持则失败
-  当前 schema 必需字段缺失则失败，不再从旧 result/config 兜底兼容
-```
-
-这个失败策略是有意设计，用来防止 analysis 引用 stale 或不存在的 checkpoint/config。
+analysis 会根据 result JSON 的 `summary.checkpoint` 和 `summary.loaded_vcot_config`
+回溯 checkpoint/metadata；缺失或过期会失败，以避免把 stale result 混入统计。
 
 ## Outputs
 
-训练输出：
-
 ```text
+artifacts/data_index/      data_index 和 internvl_meta_train.json
 artifacts/runs/direct/{experiment}/
 artifacts/runs/crop/{experiment}/
 artifacts/runs/vcot/{experiment}/
-```
-
-评估结果：
-
-```text
 artifacts/results/direct/{experiment}/
 artifacts/results/crop/{experiment}/
 artifacts/results/vcot/{experiment}/
+artifacts/analysis/        analysis 输出
 ```
 
 每个 result JSON 的 summary 会记录 checkpoint 和 loaded config。rescore 只依赖这些 summary 和 `vcot_config.json`，不再从目录名猜参数。
-
-## Current Validation State
-
-最后一次完整性校验结果：
-
-```text
-all: rows=40 manifest=40 missing=0 stale=0 manifest_match=True
-direct_grasp: rows=16 manifest=16 missing=0 stale=0 manifest_match=True
-oracle_crop: rows=12 manifest=12 missing=0 stale=0 manifest_match=True
-predicted_vcot: rows=12 manifest=12 missing=0 stale=0 manifest_match=True
-vcot_config_result_errors=0
-predicted_vcot diagnostics: rows=12
-oracle_crop crop_frame_prior: rows=12
-comparisons/direct_vs_predicted_vcot: cross_rows=768
-```
-
-含义：
-
-```text
-全量 analysis 覆盖当前 40 个 result JSON。
-direct/oracle crop/predicted VCoT 单任务目录分别覆盖当前 16/12/12 个 result JSON。
-summary.csv 和 checkpoint_manifest.csv 的 result_path 集合一致。
-VCoT result summary 与 checkpoint 内 vcot_config.json 参数一致。
-predicted VCoT 局部区域诊断覆盖全部 12 个 pred_vcot result。
-oracle crop 常量均值先验诊断覆盖全部 12 个 oracle_crop result。
-direct-vs-predicted VCoT 交叉表覆盖 direct 与 pred_vcot 的同 split 可配对样本。
-analysis 不再输出样本级逐条 CSV。
-direct baseline 和 oracle crop object 的重复 result JSON 已删除，保留 hparam canonical 结果。
-```
-
-已运行通过：
-
-```bash
-python -m py_compile ...
-bash -n ...
-git diff --check
-conda run --no-capture-output -n 260513-internvl bash analysis/rescore_existing_grasp_results.sh
-```
-
-## Current Reference Results
-
-当前结果来自最新全量 rescore：
-
-```text
-artifacts/analysis/all/overview/main_summary.csv
-result_count = 40
-direct       = 16 result JSON
-oracle_crop  = 12 result JSON
-pred_vcot    = 12 result JSON
-```
-
-按 split 分别取 official/top1 最优：
-
-| method | split | best official | official | best top1 | top1 |
-| --- | --- | --- | ---: | --- | ---: |
-| direct | seen | `lora16_lr8e-5_ep1_patch6` | 72.47 | `lora16_lr4e-5_ep2_patch6` | 49.73 |
-| direct | unseen | `lora16_lr8e-5_ep1_patch6` | 53.87 | `lora16_lr8e-5_ep1_patch6` | 33.83 |
-| oracle crop | seen | `crop_frame_lora16_lr8e-5_ep1_patch8_edge10_half40` | 77.90 | `crop_frame_lora16_lr8e-5_ep1_patch8_edge10_half40` | 59.40 |
-| oracle crop | unseen | `crop_frame_lora16_lr8e-5_ep1_patch6_edge10_half40` | 68.93 | `crop_frame_lora16_lr8e-5_ep1_patch6_edge5_half40` | 49.97 |
-| predicted VCoT | seen | `vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5` | 75.50 | `vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5` | 57.23 |
-| predicted VCoT | unseen | `vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5` | 56.83 | `vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5` | 39.07 |
-
-当前结论：
-
-```text
-predicted VCoT > direct:
-  unseen official: 56.83 vs 53.87 (+2.96 pp)
-  unseen top1:     39.07 vs 33.83 (+5.24 pp)
-
-oracle crop 仍是 upper bound:
-  unseen official: 68.93
-  unseen top1:     49.97
-```
 
 ## Development Checks
 

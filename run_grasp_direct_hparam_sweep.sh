@@ -14,6 +14,7 @@ EVAL_DATASETS="${EVAL_DATASETS:-${GRASP_EVAL_DATASETS}}"
 PYTHON_BIN="${PYTHON_BIN:-${GRASP_PYTHON_BIN}}"
 FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}"
 TRAIN_SCRIPT="${TRAIN_SCRIPT:-${GRASP_DIRECT_TRAIN_SCRIPT}}"
+EVAL_SCRIPT="${EVAL_SCRIPT:-${GRASP_DIRECT_EVAL_SCRIPT}}"
 
 export CUDA_VISIBLE_DEVICES
 
@@ -124,9 +125,10 @@ run_experiment() {
     fi
     WORK_DIR="${work_dir}" \
     OUT_DIR="${out_dir}" \
+    CUDA_VISIBLE_DEVICES="${GRASP_DIRECT_EVAL_CUDA_VISIBLE_DEVICES}" \
     GPUS="${GRASP_EVAL_GPUS}" \
     DATASETS="${eval_datasets}" \
-    bash "${GP_ROOT}/eval/eval_grasp_direct_lmdb_lora.sh" \
+    bash "${EVAL_SCRIPT}" \
       2>&1 | tee -a "${out_dir}/${name}.eval.log"
   else
     stage "eval"

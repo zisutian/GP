@@ -27,10 +27,18 @@ FORCE_IMAGE_SIZE = "448"
 EVAL_DATASETS = "test_seen,test_unseen"
 RUN_EVAL = "1"
 OVERWRITE_EVAL_RESULTS = "False"
+EVAL_VCOT_IOU_THRESHOLD = "0.25"
+EVAL_VCOT_ANGLE_THRESHOLD = "30.0"
 
 DIRECT_CUDA_VISIBLE_DEVICES = "0,1"
-CROP_CUDA_VISIBLE_DEVICES = "0,1"
+CROP_CUDA_VISIBLE_DEVICES = "2,3"
 VCOT_CUDA_VISIBLE_DEVICES = "2,3"
+DIRECT_EVAL_CUDA_VISIBLE_DEVICES = DIRECT_CUDA_VISIBLE_DEVICES
+CROP_EVAL_CUDA_VISIBLE_DEVICES = CROP_CUDA_VISIBLE_DEVICES
+VCOT_EVAL_CUDA_VISIBLE_DEVICES = VCOT_CUDA_VISIBLE_DEVICES
+DIRECT_EVAL_MASTER_PORT = "63669"
+CROP_EVAL_MASTER_PORT = "63679"
+VCOT_EVAL_MASTER_PORT = "63689"
 
 DIRECT_EXPERIMENTS = [
     ("baseline_lora16_lr4e-5_ep1_patch6", "16", "4e-5", "1", "6"),
@@ -44,7 +52,7 @@ DIRECT_EXPERIMENTS = [
 ]
 
 CROP_EXPERIMENTS = [
-    ("crop_object_lora16_lr8e-5_ep1_patch6_edge15_half50", "16", "8e-5", "1", "15", "50", "full_image", "6", "0"),
+    ("baseline_full_lora16_lr8e-5_ep1_patch6_edge15_half50", "16", "8e-5", "1", "15", "50", "full_image", "6", "0"),
     ("crop_full_lora16_lr8e-5_ep1_patch6_edge5_half40", "16", "8e-5", "1", "5", "40", "full_image", "6", "0"),
     ("crop_full_lora16_lr8e-5_ep1_patch6_edge10_half40", "16", "8e-5", "1", "10", "40", "full_image", "6", "0"),
     ("crop_frame_lora16_lr8e-5_ep1_patch6_edge5_half40", "16", "8e-5", "1", "5", "40", "crop_image", "6", "0"),
@@ -52,13 +60,19 @@ CROP_EXPERIMENTS = [
     ("crop_frame_lora16_lr8e-5_ep1_patch8_edge10_half40", "16", "8e-5", "1", "10", "40", "crop_image", "8", "0"),
 ]
 
+# name, lora, lr, epochs, bbox_ratio, bbox_loss_weight, edge_expand,
+# min_half, target_frame, max_dynamic_patch, target_grasp_index
 VCOT_EXPERIMENTS = [
-    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5", "16", "8e-5", "1", "0.5", "5", "40", "crop_image", "6", "0"),
-    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge10_half40_bbox0.5", "16", "8e-5", "1", "0.5", "10", "40", "crop_image", "6", "0"),
-    ("vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5", "16", "8e-5", "1", "0.5", "10", "40", "crop_image", "8", "0"),
-    ("vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.25", "16", "8e-5", "1", "0.25", "15", "50", "full_image", "6", "0"),
-    ("vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.5", "16", "8e-5", "1", "0.5", "15", "50", "full_image", "6", "0"),
-    ("vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox1.0", "16", "8e-5", "1", "1.0", "15", "50", "full_image", "6", "0"),
+    ("baseline_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5", "16", "8e-5", "1", "0.5", "1.0", "5", "40", "crop_image", "6", "0"),
+    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.25", "16", "8e-5", "1", "0.25", "1.0", "5", "40", "crop_image", "6", "0"),
+    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox1.0", "16", "8e-5", "1", "1.0", "1.0", "5", "40", "crop_image", "6", "0"),
+    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5_lambda0.5", "16", "8e-5", "1", "0.5", "0.5", "5", "40", "crop_image", "6", "0"),
+    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5_lambda2.0", "16", "8e-5", "1", "0.5", "2.0", "5", "40", "crop_image", "6", "0"),
+    ("vcot_frame_lora16_lr8e-5_ep1_patch6_edge10_half40_bbox0.5", "16", "8e-5", "1", "0.5", "1.0", "10", "40", "crop_image", "6", "0"),
+    ("vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5", "16", "8e-5", "1", "0.5", "1.0", "10", "40", "crop_image", "8", "0"),
+    ("vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.25", "16", "8e-5", "1", "0.25", "1.0", "15", "50", "full_image", "6", "0"),
+    ("vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox0.5", "16", "8e-5", "1", "0.5", "1.0", "15", "50", "full_image", "6", "0"),
+    ("vcot_full_lora16_lr8e-5_ep1_patch6_edge15_half50_bbox1.0", "16", "8e-5", "1", "1.0", "1.0", "15", "50", "full_image", "6", "0"),
 ]
 
 
@@ -94,10 +108,9 @@ def build_settings() -> Settings:
     internvl_root = env_path("INTERNVL_ROOT", INTERNVL_ROOT)
     internvl_chat_root = env_path("INTERNVL_CHAT_ROOT", internvl_root / "internvl_chat")
     model_path = env_path("GRASP_MODEL_PATH", MODEL_PATH)
-    train_script_root = env_path(
-        "GRASP_TRAIN_SCRIPT_ROOT",
-        internvl_chat_root / "shell/internvl2.5/2nd_finetune",
-    )
+    worker_script_root = env_path("GRASP_WORKER_SCRIPT_ROOT", GP_ROOT / "scripts/grasp_workers")
+    train_script_root = env_path("GRASP_TRAIN_SCRIPT_ROOT", worker_script_root)
+    eval_script_root = env_path("GRASP_EVAL_SCRIPT_ROOT", worker_script_root)
     direct_use_lora = env("GRASP_DIRECT_USE_LLM_LORA", DIRECT_EXPERIMENTS[0][1])
     direct_lr = env("GRASP_DIRECT_LEARNING_RATE", DIRECT_EXPERIMENTS[0][2])
     direct_epochs = env("GRASP_DIRECT_NUM_TRAIN_EPOCHS", DIRECT_EXPERIMENTS[0][3])
@@ -109,7 +122,7 @@ def build_settings() -> Settings:
     vcot_use_lora = env("GRASP_VCOT_USE_LLM_LORA", VCOT_EXPERIMENTS[0][1])
     vcot_lr = env("GRASP_VCOT_LEARNING_RATE", VCOT_EXPERIMENTS[0][2])
     vcot_epochs = env("GRASP_VCOT_NUM_TRAIN_EPOCHS", VCOT_EXPERIMENTS[0][3])
-    vcot_target_index = env("GRASP_VCOT_TARGET_GRASP_INDEX", VCOT_EXPERIMENTS[0][9])
+    vcot_target_index = env("GRASP_VCOT_TARGET_GRASP_INDEX", VCOT_EXPERIMENTS[0][10])
     default_crop_index_root = data_index_root / "crop" / CROP_EXPERIMENTS[0][0]
     default_vcot_index_root = data_index_root / "vcot" / VCOT_EXPERIMENTS[0][0]
 
@@ -127,10 +140,15 @@ def build_settings() -> Settings:
         "INTERNVL_CHAT_ROOT": str(internvl_chat_root),
         "GRASP_MODEL_PATH": str(model_path),
         "GRASP_MODEL_ROOT": str(model_path.parent.parent),
+        "GRASP_WORKER_SCRIPT_ROOT": str(worker_script_root),
         "GRASP_TRAIN_SCRIPT_ROOT": str(train_script_root),
-        "GRASP_DIRECT_TRAIN_SCRIPT": str(train_script_root / "internvl2_5_1b_grasp_direct_lmdb_lora.sh"),
-        "GRASP_CROP_TRAIN_SCRIPT": str(train_script_root / "internvl2_5_1b_grasp_crop_lmdb_lora.sh"),
-        "GRASP_VCOT_TRAIN_SCRIPT": str(train_script_root / "internvl2_5_1b_grasp_vcot_lmdb_lora.sh"),
+        "GRASP_EVAL_SCRIPT_ROOT": str(eval_script_root),
+        "GRASP_DIRECT_TRAIN_SCRIPT": str(train_script_root / "train_direct_lmdb_lora.sh"),
+        "GRASP_CROP_TRAIN_SCRIPT": str(train_script_root / "train_crop_lmdb_lora.sh"),
+        "GRASP_VCOT_TRAIN_SCRIPT": str(train_script_root / "train_vcot_lmdb_lora.sh"),
+        "GRASP_DIRECT_EVAL_SCRIPT": str(eval_script_root / "eval_direct_lmdb_lora.sh"),
+        "GRASP_CROP_EVAL_SCRIPT": str(eval_script_root / "eval_crop_lmdb_lora.sh"),
+        "GRASP_VCOT_EVAL_SCRIPT": str(eval_script_root / "eval_vcot_lmdb_lora.sh"),
         "GRASP_DIRECT_INDEX_ROOT": str(data_index_root / "direct"),
         "GRASP_CROP_INDEX_ROOT": str(data_index_root / "crop"),
         "GRASP_CROP_DEFAULT_INDEX_ROOT": str(default_crop_index_root),
@@ -159,9 +177,17 @@ def build_settings() -> Settings:
         "GRASP_EVAL_DATASETS": env("GRASP_EVAL_DATASETS", EVAL_DATASETS),
         "GRASP_RUN_EVAL": env("GRASP_RUN_EVAL", RUN_EVAL),
         "GRASP_OVERWRITE_EVAL_RESULTS": env("GRASP_OVERWRITE_EVAL_RESULTS", OVERWRITE_EVAL_RESULTS),
+        "GRASP_EVAL_VCOT_IOU_THRESHOLD": env("GRASP_EVAL_VCOT_IOU_THRESHOLD", EVAL_VCOT_IOU_THRESHOLD),
+        "GRASP_EVAL_VCOT_ANGLE_THRESHOLD": env("GRASP_EVAL_VCOT_ANGLE_THRESHOLD", EVAL_VCOT_ANGLE_THRESHOLD),
         "GRASP_DIRECT_CUDA_VISIBLE_DEVICES": env("GRASP_DIRECT_CUDA_VISIBLE_DEVICES", DIRECT_CUDA_VISIBLE_DEVICES),
         "GRASP_CROP_CUDA_VISIBLE_DEVICES": env("GRASP_CROP_CUDA_VISIBLE_DEVICES", CROP_CUDA_VISIBLE_DEVICES),
         "GRASP_VCOT_CUDA_VISIBLE_DEVICES": env("GRASP_VCOT_CUDA_VISIBLE_DEVICES", VCOT_CUDA_VISIBLE_DEVICES),
+        "GRASP_DIRECT_EVAL_CUDA_VISIBLE_DEVICES": env("GRASP_DIRECT_EVAL_CUDA_VISIBLE_DEVICES", str(DIRECT_EVAL_CUDA_VISIBLE_DEVICES)),
+        "GRASP_CROP_EVAL_CUDA_VISIBLE_DEVICES": env("GRASP_CROP_EVAL_CUDA_VISIBLE_DEVICES", str(CROP_EVAL_CUDA_VISIBLE_DEVICES)),
+        "GRASP_VCOT_EVAL_CUDA_VISIBLE_DEVICES": env("GRASP_VCOT_EVAL_CUDA_VISIBLE_DEVICES", str(VCOT_EVAL_CUDA_VISIBLE_DEVICES)),
+        "GRASP_DIRECT_EVAL_MASTER_PORT": env("GRASP_DIRECT_EVAL_MASTER_PORT", DIRECT_EVAL_MASTER_PORT),
+        "GRASP_CROP_EVAL_MASTER_PORT": env("GRASP_CROP_EVAL_MASTER_PORT", CROP_EVAL_MASTER_PORT),
+        "GRASP_VCOT_EVAL_MASTER_PORT": env("GRASP_VCOT_EVAL_MASTER_PORT", VCOT_EVAL_MASTER_PORT),
         "GRASP_DIRECT_USE_LLM_LORA": direct_use_lora,
         "GRASP_DIRECT_LEARNING_RATE": direct_lr,
         "GRASP_DIRECT_NUM_TRAIN_EPOCHS": direct_epochs,
@@ -178,10 +204,11 @@ def build_settings() -> Settings:
         "GRASP_VCOT_LEARNING_RATE": vcot_lr,
         "GRASP_VCOT_NUM_TRAIN_EPOCHS": vcot_epochs,
         "GRASP_VCOT_BBOX_RATIO": env("GRASP_VCOT_BBOX_RATIO", VCOT_EXPERIMENTS[0][4]),
-        "GRASP_VCOT_BBOX_EDGE_EXPAND": env("GRASP_VCOT_BBOX_EDGE_EXPAND", VCOT_EXPERIMENTS[0][5]),
-        "GRASP_VCOT_MIN_BBOX_HALF_SIZE": env("GRASP_VCOT_MIN_BBOX_HALF_SIZE", VCOT_EXPERIMENTS[0][6]),
-        "GRASP_VCOT_TARGET_COORDINATE_FRAME": env("GRASP_VCOT_TARGET_COORDINATE_FRAME", VCOT_EXPERIMENTS[0][7]),
-        "GRASP_VCOT_MAX_DYNAMIC_PATCH": env("GRASP_VCOT_MAX_DYNAMIC_PATCH", VCOT_EXPERIMENTS[0][8]),
+        "GRASP_VCOT_BBOX_LOSS_WEIGHT": env("GRASP_VCOT_BBOX_LOSS_WEIGHT", VCOT_EXPERIMENTS[0][5]),
+        "GRASP_VCOT_BBOX_EDGE_EXPAND": env("GRASP_VCOT_BBOX_EDGE_EXPAND", VCOT_EXPERIMENTS[0][6]),
+        "GRASP_VCOT_MIN_BBOX_HALF_SIZE": env("GRASP_VCOT_MIN_BBOX_HALF_SIZE", VCOT_EXPERIMENTS[0][7]),
+        "GRASP_VCOT_TARGET_COORDINATE_FRAME": env("GRASP_VCOT_TARGET_COORDINATE_FRAME", VCOT_EXPERIMENTS[0][8]),
+        "GRASP_VCOT_MAX_DYNAMIC_PATCH": env("GRASP_VCOT_MAX_DYNAMIC_PATCH", VCOT_EXPERIMENTS[0][9]),
         "GRASP_VCOT_TARGET_GRASP_INDEX": vcot_target_index,
     }
     return Settings(values)
