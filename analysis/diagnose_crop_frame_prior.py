@@ -417,7 +417,7 @@ def main() -> None:
             )
             summary_rows.append(result_summary)
 
-    summary_path = out_dir / "oracle_crop" / "crop_frame_prior_summary.csv"
+    summary_path = out_dir / "methods" / "oracle_crop" / "diagnostics" / "crop_frame_prior_summary.csv"
     write_csv(summary_path, summary_rows)
     update_manifest(out_dir, summary_path)
     print(f"wrote {summary_path}")

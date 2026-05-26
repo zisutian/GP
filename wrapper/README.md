@@ -20,6 +20,7 @@
 wrapper/
   internvl_wrapper.py
   demo_internvl.py
+  plot_direct_predicted_results.py
   __init__.py
 
 data_tools/
@@ -53,6 +54,71 @@ NativeInternVLWrapper
 ```bash
 cd /home/2025201095KZJ1/code/VCoTGrasp/GP/wrapper
 python demo_internvl.py
+```
+
+## Direct / Predicted VCoT 结果绘图
+
+文件：
+
+```text
+plot_direct_predicted_results.py
+```
+
+用途：
+
+- 读取 `rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/summary.csv`
+- 生成 direct 与 predicted VCoT 的成功率对比图
+- 生成 predicted VCoT 的 bbox/crop 诊断图
+- 从已有结果 JSON 和图像 LMDB 中抽样生成预测框可视化图
+
+运行：
+
+```bash
+cd /home/2025201095KZJ1/code/VCoTGrasp/GP
+python wrapper/plot_direct_predicted_results.py
+```
+
+默认输出：
+
+```text
+wrapper/direct_predicted_figures/
+```
+
+Pair 图可手动筛选。首次运行或加 `--refresh-pair-config` 会生成候选配置：
+
+```text
+wrapper/direct_predicted_figures/examples/paired_example_config.csv
+```
+
+编辑其中的 `show` 列即可控制哪些 pair 显示：`1` 表示显示，`0` 表示隐藏。再次运行脚本时不要加 `--refresh-pair-config`，脚本会读取你修改后的配置。当前支持的 pair 类别：
+
+```text
+random        # 从 direct/predicted 共有样本里随机抽
+pred_rescue   # direct 失败，predicted VCoT 成功
+direct_only   # direct 成功，predicted VCoT 失败
+both_success  # 两者都成功
+both_fail     # 两者都失败
+```
+
+只生成某几类候选也可以：
+
+```bash
+python wrapper/plot_direct_predicted_results.py \
+  --refresh-pair-config \
+  --paired-categories pred_rescue,both_success \
+  --paired-per-category 4 \
+  --paired-candidate-limit 30
+```
+
+生成随机样本加 direct 失败 / predicted 成功样本：
+
+```bash
+python wrapper/plot_direct_predicted_results.py \
+  --refresh-pair-config \
+  --paired-categories random,pred_rescue \
+  --paired-per-category 4 \
+  --paired-candidate-limit 50 \
+  --pair-random-seed 7
 ```
 
 ## Grasp-Anything Direct 数据

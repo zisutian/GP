@@ -117,7 +117,7 @@ diagnose_crop_frame_prior() {
     return
   fi
 
-  echo "Crop-frame constant-prior diagnosis (${label}): ${analysis_dir}/oracle_crop/crop_frame_prior_summary.csv"
+  echo "Crop-frame constant-prior diagnosis (${label}): ${analysis_dir}/methods/oracle_crop/diagnostics/crop_frame_prior_summary.csv"
   python analysis/diagnose_crop_frame_prior.py \
     --summary-csv "${summary_csv}" \
     --out-dir "${analysis_dir}" \

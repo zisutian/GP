@@ -35,7 +35,11 @@ METHOD_DIRS = {
     "oracle_crop": "oracle_crop",
     "pred_vcot": "predicted_vcot",
 }
+OVERVIEW_DIR = "overview"
+METHODS_DIR = "methods"
 COMPARISON_DIR = "comparisons"
+DIAGNOSTICS_DIR = "diagnostics"
+SWEEPS_DIR = "sweeps"
 
 
 @dataclass
@@ -328,6 +332,18 @@ def write_section_csv(
     write_csv(out_dir / section_name / filename, rows, fieldnames)
 
 
+def method_dir(out_dir: Path, method: str) -> Path:
+    return out_dir / METHODS_DIR / METHOD_DIRS[method]
+
+
+def method_diagnostics_dir(out_dir: Path, method: str) -> Path:
+    return method_dir(out_dir, method) / DIAGNOSTICS_DIR
+
+
+def method_sweeps_dir(out_dir: Path, method: str) -> Path:
+    return method_dir(out_dir, method) / SWEEPS_DIR
+
+
 def reset_analysis_output_dir(out_dir: Path):
     resolved = out_dir.resolve()
     protected = {Path("/").resolve(), Path.home().resolve(), REPO_ROOT.resolve(), REPO_ROOT.parent.resolve()}
@@ -441,7 +457,11 @@ def write_error_stats(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[d
     write_csv(out_dir / "error_stats.csv", rows)
 
 
-def write_geometry_sweep(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
+def write_geometry_sweep(
+    out_dir: Path,
+    grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]],
+    filename: str = "geometry.csv",
+):
     rows = []
     for result_id, (info, records) in grouped.items():
         for center_t in CENTER_THRESHOLDS:
@@ -470,10 +490,14 @@ def write_geometry_sweep(out_dir: Path, grouped: dict[str, tuple[ResultInfo, lis
                         "success_rate": success_count / info.total if info.total else 0.0,
                         "result_id": result_id,
                     })
-    write_csv(out_dir / "threshold_sweep_geometry.csv", rows)
+    write_csv(out_dir / filename, rows)
 
 
-def write_iou_sweep(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
+def write_iou_sweep(
+    out_dir: Path,
+    grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]],
+    filename: str = "iou.csv",
+):
     rows = []
     for result_id, (info, records) in grouped.items():
         for iou_t in IOU_THRESHOLDS:
@@ -504,7 +528,7 @@ def write_iou_sweep(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dic
                         "iou_angle_success_rate": iou_angle_count / info.total if info.total else 0.0,
                         "result_id": result_id,
                     })
-    write_csv(out_dir / "threshold_sweep_iou.csv", rows)
+    write_csv(out_dir / filename, rows)
 
 
 def write_direct_crop_cross(out_dir: Path, grouped: dict[str, tuple[ResultInfo, list[dict[str, Any]]]]):
@@ -570,7 +594,7 @@ def write_direct_crop_cross(out_dir: Path, grouped: dict[str, tuple[ResultInfo, 
         "direct_result_id",
         "crop_result_id",
     ]
-    write_section_csv(out_dir, COMPARISON_DIR, "direct_vs_crop_cross.csv", rows, fieldnames)
+    write_section_csv(out_dir, COMPARISON_DIR, "direct_vs_oracle_crop.csv", rows, fieldnames)
 
 
 def cross_conditions() -> list[str]:
@@ -649,7 +673,7 @@ def write_direct_pred_vcot_cross(out_dir: Path, grouped: dict[str, tuple[ResultI
     write_section_csv(
         out_dir,
         COMPARISON_DIR,
-        "direct_vs_pred_vcot_cross.csv",
+        "direct_vs_predicted_vcot.csv",
         summary_rows,
         summary_fieldnames,
     )
@@ -698,7 +722,7 @@ def write_crop_quality(
     if not any(info.method == "oracle_crop" for info, _records in grouped.values()):
         return
 
-    sample_rows = []
+    quality_rows = []
     with mask_env.begin() as mask_txn:
         for result_id, (info, records) in grouped.items():
             if info.method != "oracle_crop":
@@ -707,7 +731,7 @@ def write_crop_quality(
                 quality = crop_quality_for_record(record, mask_txn, image_size)
                 if quality is None:
                     continue
-                sample_rows.append({
+                quality_rows.append({
                     "method": info.method,
                     "experiment": info.experiment,
                     "split": info.split,
@@ -719,8 +743,8 @@ def write_crop_quality(
                     **quality,
                 })
     summary_rows = []
-    for result_id in sorted({row["result_id"] for row in sample_rows}):
-        subset = [row for row in sample_rows if row["result_id"] == result_id]
+    for result_id in sorted({row["result_id"] for row in quality_rows}):
+        subset = [row for row in quality_rows if row["result_id"] == result_id]
         for group_name, group_rows in [
             ("all", subset),
             ("official_success", [row for row in subset if row["official_success"]]),
@@ -754,7 +778,11 @@ def write_crop_quality(
         "p90",
         "result_id",
     ]
-    write_section_csv(out_dir, METHOD_DIRS["oracle_crop"], "crop_quality_summary.csv", summary_rows, summary_fieldnames)
+    write_csv(
+        method_diagnostics_dir(out_dir, "oracle_crop") / "crop_quality_summary.csv",
+        summary_rows,
+        summary_fieldnames,
+    )
 
 
 def write_predicted_vcot_diagnostics(
@@ -970,13 +998,63 @@ def write_predicted_vcot_diagnostics(
         "success_object_coverage_mean",
         "fail_object_coverage_mean",
     ]
-    write_section_csv(
-        out_dir,
-        METHOD_DIRS["pred_vcot"],
-        "diagnostics_summary.csv",
+    write_csv(
+        method_diagnostics_dir(out_dir, "pred_vcot") / "pipeline_summary.csv",
         summary_rows,
         summary_fieldnames,
     )
+
+
+def write_analysis_readme(out_dir: Path, manifest: dict[str, Any]) -> None:
+    lines = [
+        "# Grasp Rescore Analysis",
+        "",
+        "This directory contains result-level summary CSVs generated from existing evaluation JSON files.",
+        "No per-sample CSV files are written.",
+        "",
+        "## Layout",
+        "",
+        "- `overview/main_summary.csv`: one row per result JSON across all included methods.",
+        "- `methods/<method>/main_summary.csv`: one row per result JSON for a single method.",
+        "- `methods/<method>/error_stats.csv`: mean/median/p75/p90 for grasp error metrics.",
+        "- `methods/<method>/sweeps/geometry.csv`: success rates over center/size/angle thresholds.",
+        "- `methods/<method>/sweeps/iou.csv`: success rates over rotated-IoU/angle thresholds.",
+        "- `comparisons/direct_vs_oracle_crop.csv`: paired direct vs oracle-crop summary.",
+        "- `comparisons/direct_vs_predicted_vcot.csv`: paired direct vs predicted-VCoT summary.",
+        "- `methods/oracle_crop/diagnostics/crop_quality_summary.csv`: object coverage and crop background diagnostics.",
+        "- `methods/oracle_crop/diagnostics/crop_frame_prior_summary.csv`: constant crop-frame prior baseline.",
+        "- `methods/predicted_vcot/diagnostics/pipeline_summary.csv`: predicted bbox/crop pipeline diagnostics.",
+        "",
+        "## Core Metrics",
+        "",
+        "- `official_success_rate`: any GT grasp has rotated IoU >= iou_threshold and angle error <= angle_threshold.",
+        "- `top1_success_rate`: the first GT grasp satisfies the same IoU and angle criteria.",
+        "- `top1_*_rate`: top1 geometry success under strict/medium/loose center-size-angle thresholds.",
+        "- `all_labels_*_rate`: the same geometry test against any GT grasp.",
+        "- `*_center_xy_error_px`: center distance in pixels at image_size scale.",
+        "- `*_width_height_error_px`: L2 distance between predicted and GT width/height.",
+        "- `*_circular_angle_error_deg`: angle error with 180-degree periodicity.",
+        "- `max_iou_with_all_labels`: best rotated IoU against all GT labels, independent of angle threshold.",
+        "",
+        "## Comparison Metrics",
+        "",
+        "- `matched_total`: paired samples shared by both compared results.",
+        "- `both_success` / `both_fail`: both methods agree under `condition`.",
+        "- `direct_success_*_fail`: direct succeeds and the compared method fails.",
+        "- `direct_fail_*_success`: direct fails and the compared method succeeds.",
+        "- `rescued_by_*`: same as `direct_fail_*_success`.",
+        "- `broken_by_*`: same as `direct_success_*_fail`.",
+        "- `net_gain`: rescued minus broken.",
+        "",
+        "## Run Metadata",
+        "",
+        f"- `iou_threshold`: {manifest['iou_threshold']}",
+        f"- `angle_threshold`: {manifest['angle_threshold']}",
+        f"- `image_size`: {manifest['image_size']}",
+        f"- `result_count`: {manifest['result_count']}",
+        "",
+    ]
+    (out_dir / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def run_analysis(
@@ -1019,17 +1097,17 @@ def run_analysis(
             info, records = read_result_file(Path(result), grasp_txn, analysis_args)
             grouped[info.result_id] = (info, records)
 
-    write_main_summary(out_dir, grouped)
+    write_main_summary(out_dir / OVERVIEW_DIR, grouped)
 
     for method, dirname in METHOD_DIRS.items():
         method_grouped = grouped_for_method(grouped, method)
         if not method_grouped:
             continue
-        method_out_dir = out_dir / dirname
+        method_out_dir = out_dir / METHODS_DIR / dirname
         write_main_summary(method_out_dir, method_grouped)
         write_error_stats(method_out_dir, method_grouped)
-        write_geometry_sweep(method_out_dir, method_grouped)
-        write_iou_sweep(method_out_dir, method_grouped)
+        write_geometry_sweep(method_sweeps_dir(out_dir, method), method_grouped)
+        write_iou_sweep(method_sweeps_dir(out_dir, method), method_grouped)
 
     write_direct_crop_cross(out_dir, grouped)
     write_direct_pred_vcot_cross(out_dir, grouped)
@@ -1045,13 +1123,15 @@ def run_analysis(
         "result_count": len(grouped),
         "outputs": outputs,
         "method_dirs": {
-            method: dirname
+            method: f"{METHODS_DIR}/{dirname}"
             for method, dirname in METHOD_DIRS.items()
             if grouped_for_method(grouped, method)
         },
+        "overview_dir": OVERVIEW_DIR,
         "comparison_dir": COMPARISON_DIR,
     }
     (out_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    write_analysis_readme(out_dir, manifest)
     print(f"analysis_dir={out_dir} result_count={len(grouped)} csv_outputs={len(outputs)}")
 
 

@@ -193,7 +193,7 @@ InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/
 | `analysis/rescore_existing_grasp_results.sh` | 对已有 result JSON 统一重打分和分析 |
 | `analysis/score_vcot_grasp_results.py` | result JSON 指标重算 |
 | `analysis/collect_checkpoint_manifest.py` | 从 result/config 收集 checkpoint manifest |
-| `analysis/analyze_grasp_results.py` | 输出 summary/error/sample/threshold/cross 分析 |
+| `analysis/analyze_grasp_results.py` | 输出 result 级 summary/error/sweep/cross/diagnostics 分析 |
 | `analysis/diagnose_crop_frame_prior.py` | 诊断 oracle crop 的 crop-frame 坐标先验 |
 
 ## Run
@@ -395,33 +395,47 @@ conda run --no-capture-output -n 260513-internvl \
 rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/
   summary.csv
   checkpoint_manifest.csv
-  analysis/main_summary.csv
-  analysis/direct_grasp/*.csv
-  analysis/oracle_crop/*.csv
-  analysis/predicted_vcot/*.csv
-  analysis/comparisons/direct_vs_crop_cross.csv
-  analysis/comparisons/direct_vs_pred_vcot_cross.csv
+  analysis/README.md
+  analysis/overview/main_summary.csv
+  analysis/methods/direct_grasp/*.csv
+  analysis/methods/direct_grasp/sweeps/*.csv
+  analysis/methods/oracle_crop/*.csv
+  analysis/methods/oracle_crop/sweeps/*.csv
+  analysis/methods/oracle_crop/diagnostics/*.csv
+  analysis/methods/predicted_vcot/*.csv
+  analysis/methods/predicted_vcot/sweeps/*.csv
+  analysis/methods/predicted_vcot/diagnostics/*.csv
+  analysis/comparisons/direct_vs_oracle_crop.csv
+  analysis/comparisons/direct_vs_predicted_vcot.csv
   analysis/manifest.json
 
 rescore_result/task_direct_grasp_original_image/
   summary.csv
   checkpoint_manifest.csv
-  analysis/main_summary.csv
-  analysis/direct_grasp/*.csv
+  analysis/README.md
+  analysis/overview/main_summary.csv
+  analysis/methods/direct_grasp/*.csv
+  analysis/methods/direct_grasp/sweeps/*.csv
   analysis/manifest.json
 
 rescore_result/task_oracle_crop_gt_mask_crop/
   summary.csv
   checkpoint_manifest.csv
-  analysis/main_summary.csv
-  analysis/oracle_crop/*.csv
+  analysis/README.md
+  analysis/overview/main_summary.csv
+  analysis/methods/oracle_crop/*.csv
+  analysis/methods/oracle_crop/sweeps/*.csv
+  analysis/methods/oracle_crop/diagnostics/*.csv
   analysis/manifest.json
 
 rescore_result/task_predicted_vcot_two_stage_predicted_crop/
   summary.csv
   checkpoint_manifest.csv
-  analysis/main_summary.csv
-  analysis/predicted_vcot/*.csv
+  analysis/README.md
+  analysis/overview/main_summary.csv
+  analysis/methods/predicted_vcot/*.csv
+  analysis/methods/predicted_vcot/sweeps/*.csv
+  analysis/methods/predicted_vcot/diagnostics/*.csv
   analysis/manifest.json
 ```
 
@@ -547,41 +561,44 @@ top1 success 定义：
 `analysis/analyze_grasp_results.py` 输出语义：
 
 ```text
-main_summary.csv:
+overview/main_summary.csv:
   当前 analysis 输入内每个 result 的主指标，包含 official/top1/strict/medium/loose/error mean 等。
 
-{direct_grasp,oracle_crop,predicted_vcot}/main_summary.csv:
+methods/{direct_grasp,oracle_crop,predicted_vcot}/main_summary.csv:
   按方法拆分后的主指标。
 
-{direct_grasp,oracle_crop,predicted_vcot}/error_stats.csv:
+methods/{direct_grasp,oracle_crop,predicted_vcot}/error_stats.csv:
   各误差指标的 mean/median/p75/p90。
 
-{direct_grasp,oracle_crop,predicted_vcot}/threshold_sweep_geometry.csv:
+methods/{direct_grasp,oracle_crop,predicted_vcot}/sweeps/geometry.csv:
   center/width-height/angle 阈值扫描。
 
-{direct_grasp,oracle_crop,predicted_vcot}/threshold_sweep_iou.csv:
+methods/{direct_grasp,oracle_crop,predicted_vcot}/sweeps/iou.csv:
   IoU/angle 阈值扫描。
 
-comparisons/direct_vs_crop_cross.csv:
+comparisons/direct_vs_oracle_crop.csv:
   direct/crop 在同 split 可配对样本上的交叉对比。
 
-comparisons/direct_vs_pred_vcot_cross.csv:
+comparisons/direct_vs_predicted_vcot.csv:
   direct/predicted VCoT 在同 split 可配对样本上的交叉对比，包含 direct 成功
   predicted 失败、direct 失败 predicted 成功、rescued/broken/net gain 等计数和比例。
 
-oracle_crop/crop_quality_summary.csv:
+methods/oracle_crop/diagnostics/crop_quality_summary.csv:
   crop 质量指标按 all/official_success/official_fail 聚合。
 
-oracle_crop/crop_frame_prior_summary.csv:
+methods/oracle_crop/diagnostics/crop_frame_prior_summary.csv:
   oracle crop 的 crop-frame 常量均值先验诊断。它从训练集 crop-frame target grasp
   估计一个常量均值向量，把该常量作为测试集预测反变换回原图后重新计算 official/top1，
   用于验证 crop_image 模型是否只是利用固定局部坐标先验。
 
-predicted_vcot/diagnostics_summary.csv:
+methods/predicted_vcot/diagnostics/pipeline_summary.csv:
   predicted VCoT 的 bbox/crop/object_coverage/good crop/bad crop 局部区域诊断。
   当前会覆盖所有 pred_vcot result，包括最新 frame 配置
   `vcot_frame_lora16_lr8e-5_ep1_patch8_edge10_half40_bbox0.5` 和
   `vcot_frame_lora16_lr8e-5_ep1_patch6_edge5_half40_bbox0.5`。
+
+README.md:
+  当前 analysis 目录的指标和布局说明，会随 analysis 自动生成。
 
 manifest.json:
   analysis 阈值、image_size、result_count 和输出文件清单。
@@ -653,7 +670,7 @@ task_predicted_vcot_two_stage_predicted_crop: rows=12 manifest=12 missing=0 stal
 vcot_config_result_errors=0
 predicted_vcot diagnostics: rows=12
 oracle_crop crop_frame_prior: rows=12
-comparisons/direct_vs_pred_vcot: cross_rows=768
+comparisons/direct_vs_predicted_vcot: cross_rows=768
 ```
 
 含义：
@@ -684,7 +701,7 @@ conda run --no-capture-output -n 260513-internvl bash analysis/rescore_existing_
 当前结果来自最新全量 rescore：
 
 ```text
-rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/analysis/main_summary.csv
+rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/analysis/overview/main_summary.csv
 result_count = 40
 direct       = 16 result JSON
 oracle_crop  = 12 result JSON

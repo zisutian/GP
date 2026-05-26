@@ -185,3 +185,5 @@ InternVL/pretrained
 InternVL/internvl_chat/work_dirs
 wrapper/pretrained/paligemma2-3b-mix-224
 rescore_result
+wrapper/direct_predicted_figures/*
+wrapper/tensorboard_loss_figures/*
