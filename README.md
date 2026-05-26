@@ -6,11 +6,11 @@
 核心约定：
 
 ```text
-原始 LMDB 不移动、不改写：
-../VCoT-Grasp-self/data/grasp_anything/lmdb/
+原始数据位置只在根目录 grasp_settings.py 里指定：
+GRASP_DATASET_ROOT -> origin_split/*.csv + lmdb/
 
 GP 目录只保存：
-manifest / meta / config / train output / eval result / rescore analysis
+data_index / meta / config / train output / eval result / analysis
 ```
 
 ## Pipeline
@@ -30,111 +30,92 @@ manifest / meta / config / train output / eval result / rescore analysis
 
 ```text
 origin_split/*.csv + LMDB
-  -> manifest (*.jsonl)
+  -> data_index (*.jsonl)
   -> internvl_meta_train.json
   -> train 写 vcot_config.json
   -> checkpoint 复制 vcot_config.json
   -> eval 从 checkpoint/父目录读取 vcot_config.json
   -> result JSON
-  -> rescore/analysis CSV
+  -> analysis CSV
 ```
 
 几个名字的含义：
 
 ```text
-manifest:
+data_index:
   *.jsonl 样本清单。每行保存 image_key / grasp_key / mask_key / obj_name / crop 参数等。
   它不是图像数据本体，也不保存 crop 图像。
 
 internvl_meta_train.json:
   InternVL 训练入口读取的数据集配置。
-  它指向 manifest，并声明 vcot_dataset、repeat_time、crop 参数等。
+  它指向 data_index，并声明 vcot_dataset、repeat_time、crop 参数等。
 
 vcot_config.json:
   每个实验/checkpoint 的可回溯配置。
-  eval/analysis 依赖它确认 pipeline、meta_path、crop 参数、bbox_ratio 等。
+  eval/analysis 依赖它确认 pipeline、data_index_root、meta_path、crop 参数、bbox_ratio 等。
 ```
 
-`data/vcot_grasp` 里有三类目录，语义不同：
+路径和实验名统一从根目录 `grasp_settings.py` 生成。shell 入口只 source
+根目录 `grasp_paths.sh`，不再各自维护路径。`scripts/` 只保留数据准备、配置写入和通用运行函数。
+实验表按“实验名 + 显式参数”写在 `DIRECT_EXPERIMENTS / CROP_EXPERIMENTS /
+VCOT_EXPERIMENTS` 中；脚本不会从实验名反解析参数。
 
 ```text
-shared canonical manifests:
-  可以跨实验共用，因为 manifest 不含 crop 设计参数。
-
-default/example manifests:
-  给默认 train/eval 入口和快速 sanity check 使用。
-  它们不是所有 hparam 实验都应该共用的目录。
-
-hparam manifests:
-  每个实验私有，尤其用于保存 crop 参数相关的 manifest。
+DATASET_ROOT       原始 Grasp-Anything 数据根目录
+DATA_INDEX_ROOT    轻量数据索引和 internvl_meta_train.json
+RUN_ROOT           训练输出、checkpoint、TensorBoard
+RESULT_ROOT        推理评测 JSON
+ANALYSIS_ROOT      汇总分析和按任务拆分的检测结果表
 ```
 
-共享 canonical manifests：
+默认目录结构：
 
 ```text
-data/vcot_grasp/direct/
+artifacts/data_index/direct/
   train.jsonl
   test_seen.jsonl
   test_unseen.jsonl
   internvl_meta_train.json
 
-data/vcot_grasp/bbox/
-  train.jsonl
-  test_seen.jsonl
-  test_unseen.jsonl
-  internvl_meta_train.json
-```
-
-`direct` 只依赖原图和 grasp label，`bbox` 只依赖原图和 mask；它们不包含
-`bbox_edge_expand / min_bbox_half_size / target_coordinate_frame` 这类 crop 设计参数，所以可以被 hparam 实验共用。
-
-默认/example manifests：
-
-```text
-data/vcot_grasp/crop/
+artifacts/data_index/bbox/
   train.jsonl
   test_seen.jsonl
   test_unseen.jsonl
   internvl_meta_train.json
 
-data/vcot_grasp/vcot/
-  test_seen.jsonl
-  test_unseen.jsonl
-  internvl_meta_train.json
-```
-
-`data/vcot_grasp/crop/` 是默认 oracle crop 配置，不应被不同 crop 设计的 hparam 实验静默共用。
-`data/vcot_grasp/vcot/` 是默认 VCoT eval/meta 入口。真正的 VCoT hparam 会使用下面的私有目录。
-
-hparam manifests：
-
-```text
-data/vcot_grasp/crop_hparams/{experiment}/
+artifacts/data_index/crop/{experiment}/
   train.jsonl
   test_seen.jsonl
   test_unseen.jsonl
   internvl_meta_train.json
 
-data/vcot_grasp/vcot_hparams/{experiment}/
+artifacts/data_index/vcot/{experiment}/
   crop/train.jsonl
   test_seen.jsonl
   test_unseen.jsonl
   internvl_meta_train.json
 ```
 
-crop/VCoT hparam 目录是实验私有的，用来避免不同 crop 设置共用同一个语义不清的
-`train.jsonl` 或 eval split manifest。sweep eval 会通过 `DATASET_ROOT` 指向这些私有目录。
+`direct` 和 `bbox` 没有 crop 设计参数，可以共享。`crop` 和 `vcot` 的
+data_index 直接挂在实验名下面，避免不同 crop 设置共用同一个 `train.jsonl`。
 
-`scripts/ensure_grasp_data.py` 会在 train/eval 前检查 manifest/meta：
+data stage 需要显式运行；train/eval 只检查已有 data_index/meta，不会自动生成。
+一次性生成当前 `grasp_settings.py` 中全部实验需要的数据索引：
 
 ```bash
-python scripts/ensure_grasp_data.py direct --splits train test_seen test_unseen
-python scripts/ensure_grasp_data.py crop --splits train test_seen test_unseen
-python scripts/ensure_grasp_data.py vcot --eval-splits test_seen test_unseen
+bash data_tools/run_grasp_data.sh
 ```
 
-如果文件缺失会自动从 `origin_split/*.csv` 重建；如果已有 crop manifest 的参数和当前实验参数不匹配，会报错而不是静默覆盖。
-hparam sweep 会传入自己的 `--meta-path/--output-root/--crop-root`，因此不会把私有实验数据写进默认/example 目录。
+也可以只生成单个任务/实验：
+
+```bash
+python data_tools/ensure_grasp_data.py direct --splits train test_seen test_unseen
+python data_tools/ensure_grasp_data.py crop --splits train test_seen test_unseen
+python data_tools/ensure_grasp_data.py vcot --eval-splits test_seen test_unseen
+```
+
+如果文件缺失会自动从 `origin_split/*.csv` 重建；如果已有 crop data_index
+的参数和当前实验参数不匹配，会报错而不是静默覆盖。
 
 ## Important Files
 
@@ -142,18 +123,22 @@ hparam sweep 会传入自己的 `--meta-path/--output-root/--crop-root`，因此
 
 | 文件 | 作用 |
 | --- | --- |
-| `scripts/ensure_grasp_data.py` | 检查/自动构建 manifest 和 `internvl_meta_train.json` |
-| `scripts/grasp_config.py` | 写入实验目录和 checkpoint 下的 `vcot_config.json` |
-| `scripts/grasp_run_common.sh` | sweep/eval 共用的 checkpoint/result 跳过逻辑 |
+| `grasp_settings.py` | 唯一路径和实验表配置入口 |
+| `grasp_paths.sh` | shell 入口 source 后导出路径变量 |
+| `scripts/grasp_experiment_metadata.py` | 写入实验目录和 checkpoint 下的 `vcot_config.json` |
+| `scripts/grasp_runtime_helpers.sh` | train/eval/sweep 共用的运行期 helper：阶段显示、checkpoint/result 跳过逻辑 |
 
 数据准备与懒加载：
 
 | 文件 | 作用 |
 | --- | --- |
-| `data_tools/prepare_grasp_anything_direct.py` | 生成 direct manifest/meta |
-| `data_tools/prepare_grasp_anything_crop.py` | 生成 oracle crop manifest/meta |
-| `data_tools/prepare_grasp_anything_bbox.py` | 生成 bbox detection manifest/meta |
-| `data_tools/prepare_grasp_anything_vcot.py` | 生成 VCoT joint train meta 与 eval manifest |
+| `data_tools/run_grasp_data.sh` | data stage 入口，一次性生成当前实验表需要的 data_index/meta |
+| `data_tools/ensure_grasp_data.py` | 显式生成 data_index 和 `internvl_meta_train.json` |
+| `data_tools/check_grasp_data.py` | 只检查 data_index/meta，不生成文件 |
+| `data_tools/prepare_grasp_anything_direct.py` | 生成 direct data_index/meta |
+| `data_tools/prepare_grasp_anything_crop.py` | 生成 oracle crop data_index/meta |
+| `data_tools/prepare_grasp_anything_bbox.py` | 生成 bbox detection data_index/meta |
+| `data_tools/prepare_grasp_anything_vcot.py` | 生成 VCoT joint train meta 与 eval data_index |
 | `data_tools/vcot_direct_lmdb.py` | direct 样本构造 |
 | `data_tools/vcot_crop_lmdb.py` | GT mask crop、坐标转换、crop grasp 样本构造 |
 | `data_tools/vcot_bbox_lmdb.py` | mask -> bbox detection 样本构造 |
@@ -239,14 +224,15 @@ checkpoint-* 是唯一可复用训练产物。
 
 sweep -> train script -> vcot_config.json 使用同一组参数：
   experiment_name
-  meta_path / crop_root / bbox_root
+  data_index_root / meta_path / crop_root / bbox_root
   use_llm_lora / learning_rate / num_train_epochs
   max_dynamic_patch / force_image_size
   bbox_ratio / bbox_edge_expand / min_bbox_half_size
   target_coordinate_frame / target_grasp_index
 
 train 完成后会再次写 vcot_config.json，并复制到所有 checkpoint-* 下。
-eval 和 analysis 均以 result summary 里的 checkpoint + loaded_vcot_config 为准。
+eval 只需要 checkpoint；data_index_root 和 crop 参数从 checkpoint 的 vcot_config.json 读取。
+analysis 以 result summary 里的 checkpoint + loaded_vcot_config 为准。
 ```
 
 当前 direct sweep 搜索范围：
@@ -373,12 +359,11 @@ summary:
 `[cx, cy, w, h, angle_deg]`。如果某个样本解析失败，`pred_norm` 为 `None`，会计入
 all 分母，但不会进入 valid 分母。
 
-单独评估 crop/VCoT hparam checkpoint 时，建议同时传对应实验的私有 manifest 根目录：
+单独评估 crop/VCoT hparam checkpoint 时，只需要指定 checkpoint 或 WORK_DIR：
 
 ```bash
-WORK_DIR=InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_vcot_hparams/{experiment} \
-DATASET_ROOT=data/vcot_grasp/vcot_hparams/{experiment} \
-OUT_DIR=result/vcot_grasp_vcot/hparams/{experiment} \
+WORK_DIR=artifacts/runs/vcot/{experiment} \
+OUT_DIR=artifacts/results/vcot/{experiment} \
 conda run --no-capture-output -n 260513-internvl bash eval/eval_grasp_vcot_lmdb_lora.sh
 ```
 
@@ -389,74 +374,82 @@ conda run --no-capture-output -n 260513-internvl \
   bash analysis/rescore_existing_grasp_results.sh
 ```
 
+如果只想分析指定结果，写一个列表文件，每行一个 result JSON 路径：
+
+```bash
+RESULT_LIST=analysis/result_list.txt \
+conda run --no-capture-output -n 260513-internvl \
+  bash analysis/rescore_existing_grasp_results.sh
+```
+
 输出目录：
 
 ```text
-rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/
+artifacts/analysis/all/
   summary.csv
   checkpoint_manifest.csv
-  analysis/README.md
-  analysis/overview/main_summary.csv
-  analysis/methods/direct_grasp/*.csv
-  analysis/methods/direct_grasp/sweeps/*.csv
-  analysis/methods/oracle_crop/*.csv
-  analysis/methods/oracle_crop/sweeps/*.csv
-  analysis/methods/oracle_crop/diagnostics/*.csv
-  analysis/methods/predicted_vcot/*.csv
-  analysis/methods/predicted_vcot/sweeps/*.csv
-  analysis/methods/predicted_vcot/diagnostics/*.csv
-  analysis/comparisons/direct_vs_oracle_crop.csv
-  analysis/comparisons/direct_vs_predicted_vcot.csv
-  analysis/manifest.json
+  README.md
+  overview/main_summary.csv
+  methods/direct_grasp/*.csv
+  methods/direct_grasp/sweeps/*.csv
+  methods/oracle_crop/*.csv
+  methods/oracle_crop/sweeps/*.csv
+  methods/oracle_crop/diagnostics/*.csv
+  methods/predicted_vcot/*.csv
+  methods/predicted_vcot/sweeps/*.csv
+  methods/predicted_vcot/diagnostics/*.csv
+  comparisons/direct_vs_oracle_crop.csv
+  comparisons/direct_vs_predicted_vcot.csv
+  manifest.json
 
-rescore_result/task_direct_grasp_original_image/
+artifacts/analysis/direct_grasp/
   summary.csv
   checkpoint_manifest.csv
-  analysis/README.md
-  analysis/overview/main_summary.csv
-  analysis/methods/direct_grasp/*.csv
-  analysis/methods/direct_grasp/sweeps/*.csv
-  analysis/manifest.json
+  README.md
+  overview/main_summary.csv
+  methods/direct_grasp/*.csv
+  methods/direct_grasp/sweeps/*.csv
+  manifest.json
 
-rescore_result/task_oracle_crop_gt_mask_crop/
+artifacts/analysis/oracle_crop/
   summary.csv
   checkpoint_manifest.csv
-  analysis/README.md
-  analysis/overview/main_summary.csv
-  analysis/methods/oracle_crop/*.csv
-  analysis/methods/oracle_crop/sweeps/*.csv
-  analysis/methods/oracle_crop/diagnostics/*.csv
-  analysis/manifest.json
+  README.md
+  overview/main_summary.csv
+  methods/oracle_crop/*.csv
+  methods/oracle_crop/sweeps/*.csv
+  methods/oracle_crop/diagnostics/*.csv
+  manifest.json
 
-rescore_result/task_predicted_vcot_two_stage_predicted_crop/
+artifacts/analysis/predicted_vcot/
   summary.csv
   checkpoint_manifest.csv
-  analysis/README.md
-  analysis/overview/main_summary.csv
-  analysis/methods/predicted_vcot/*.csv
-  analysis/methods/predicted_vcot/sweeps/*.csv
-  analysis/methods/predicted_vcot/diagnostics/*.csv
-  analysis/manifest.json
+  README.md
+  overview/main_summary.csv
+  methods/predicted_vcot/*.csv
+  methods/predicted_vcot/sweeps/*.csv
+  methods/predicted_vcot/diagnostics/*.csv
+  manifest.json
 ```
 
 目录语义：
 
 ```text
-all_methods_direct_grasp_oracle_crop_predicted_vcot:
+all:
   全量跨任务汇总，包含 direct/oracle crop/predicted VCoT 以及跨任务对比表。
 
-task_direct_grasp_original_image:
+direct_grasp:
   只包含 direct_grasp，也就是原图直接预测 grasp。
 
-task_oracle_crop_gt_mask_crop:
+oracle_crop:
   只包含 oracle_crop，也就是 GT mask crop upper bound。
 
-task_predicted_vcot_two_stage_predicted_crop:
+predicted_vcot:
   只包含 predicted_vcot，也就是预测 bbox -> predicted crop -> grasp 的二阶段闭环。
 ```
 
 `analysis/rescore_existing_grasp_results.sh` 默认会刷新全量跨任务 analysis、
-三个 task-specific analysis，并为 oracle crop 生成 crop-frame 常量先验诊断。
+三个单任务 analysis，并为 oracle crop 生成 crop-frame 常量先验诊断。
 可用这些开关控制：
 
 ```bash
@@ -492,10 +485,10 @@ checkpoint_manifest.csv:
   如果 checkpoint 或 config 不存在，manifest 生成会直接失败。
 
 coverage:
-  all_methods_direct_grasp_oracle_crop_predicted_vcot 覆盖 direct/crop/vcot 下所有 JSON。
-  task_direct_grasp_original_image 只覆盖 result/vcot_grasp_direct 下的 JSON。
-  task_oracle_crop_gt_mask_crop 只覆盖 result/vcot_grasp_crop 下的 JSON。
-  task_predicted_vcot_two_stage_predicted_crop 只覆盖 result/vcot_grasp_vcot 下的 JSON。
+  all 覆盖 artifacts/results/direct|crop|vcot 下所有 JSON。
+  direct_grasp 只覆盖 artifacts/results/direct 下的 JSON。
+  oracle_crop 只覆盖 artifacts/results/crop 下的 JSON。
+  predicted_vcot 只覆盖 artifacts/results/vcot 下的 JSON。
 ```
 
 `analysis/score_vcot_grasp_results.py` 逐文件逻辑：
@@ -642,18 +635,17 @@ oracle_crop / predicted_vcot 额外要求 result summary 里已有:
 训练输出：
 
 ```text
-InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/
-  grasp_direct_hparams/{experiment}/
-  grasp_crop_hparams/{experiment}/
-  grasp_vcot_hparams/{experiment}/
+artifacts/runs/direct/{experiment}/
+artifacts/runs/crop/{experiment}/
+artifacts/runs/vcot/{experiment}/
 ```
 
 评估结果：
 
 ```text
-result/vcot_grasp_direct/hparams/{experiment}/
-result/vcot_grasp_crop/hparams/{experiment}/
-result/vcot_grasp_vcot/hparams/{experiment}/
+artifacts/results/direct/{experiment}/
+artifacts/results/crop/{experiment}/
+artifacts/results/vcot/{experiment}/
 ```
 
 每个 result JSON 的 summary 会记录 checkpoint 和 loaded config。rescore 只依赖这些 summary 和 `vcot_config.json`，不再从目录名猜参数。
@@ -663,10 +655,10 @@ result/vcot_grasp_vcot/hparams/{experiment}/
 最后一次完整性校验结果：
 
 ```text
-all_methods_direct_grasp_oracle_crop_predicted_vcot: rows=40 manifest=40 missing=0 stale=0 manifest_match=True
-task_direct_grasp_original_image: rows=16 manifest=16 missing=0 stale=0 manifest_match=True
-task_oracle_crop_gt_mask_crop: rows=12 manifest=12 missing=0 stale=0 manifest_match=True
-task_predicted_vcot_two_stage_predicted_crop: rows=12 manifest=12 missing=0 stale=0 manifest_match=True
+all: rows=40 manifest=40 missing=0 stale=0 manifest_match=True
+direct_grasp: rows=16 manifest=16 missing=0 stale=0 manifest_match=True
+oracle_crop: rows=12 manifest=12 missing=0 stale=0 manifest_match=True
+predicted_vcot: rows=12 manifest=12 missing=0 stale=0 manifest_match=True
 vcot_config_result_errors=0
 predicted_vcot diagnostics: rows=12
 oracle_crop crop_frame_prior: rows=12
@@ -701,7 +693,7 @@ conda run --no-capture-output -n 260513-internvl bash analysis/rescore_existing_
 当前结果来自最新全量 rescore：
 
 ```text
-rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/analysis/overview/main_summary.csv
+artifacts/analysis/all/overview/main_summary.csv
 result_count = 40
 direct       = 16 result JSON
 oracle_crop  = 12 result JSON
@@ -736,7 +728,7 @@ oracle crop 仍是 upper bound:
 修改 shell/Python 后建议跑：
 
 ```bash
-python -m py_compile scripts/ensure_grasp_data.py scripts/grasp_config.py \
+python -m py_compile grasp_settings.py data_tools/ensure_grasp_data.py data_tools/check_grasp_data.py scripts/grasp_experiment_metadata.py \
   analysis/analyze_grasp_results.py \
   analysis/collect_checkpoint_manifest.py \
   analysis/diagnose_crop_frame_prior.py \
@@ -746,7 +738,8 @@ python -m py_compile scripts/ensure_grasp_data.py scripts/grasp_config.py \
   data_tools/prepare_grasp_anything_bbox.py \
   data_tools/prepare_grasp_anything_vcot.py
 
-bash -n scripts/grasp_run_common.sh \
+bash -n grasp_paths.sh scripts/grasp_runtime_helpers.sh \
+  data_tools/run_grasp_data.sh \
   analysis/rescore_existing_grasp_results.sh \
   run_grasp_direct_hparam_sweep.sh \
   run_grasp_crop_design_sweep.sh \

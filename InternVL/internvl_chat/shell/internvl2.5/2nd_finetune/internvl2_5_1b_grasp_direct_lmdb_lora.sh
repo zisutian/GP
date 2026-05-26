@@ -1,21 +1,23 @@
 set -euo pipefail
 set -x
 
-GPUS=${GPUS:-2}
-BATCH_SIZE=${BATCH_SIZE:-16}
-PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-4}
+GP_ROOT=${GP_ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"}
+source "${GP_ROOT}/scripts/grasp_runtime_helpers.sh"
+
+GPUS=${GPUS:-${GRASP_TRAIN_GPUS}}
+BATCH_SIZE=${BATCH_SIZE:-${GRASP_BATCH_SIZE}}
+PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-${GRASP_PER_DEVICE_BATCH_SIZE}}
 GRADIENT_ACC=$((BATCH_SIZE / PER_DEVICE_BATCH_SIZE / GPUS))
 LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
-GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
-cd "${GP_ROOT}/InternVL/internvl_chat"
+cd "${INTERNVL_CHAT_ROOT}"
 
-USE_LLM_LORA=${USE_LLM_LORA:-16}
-LEARNING_RATE=${LEARNING_RATE:-8e-5}
-NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-1}
-MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-6}
-FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-448}
+USE_LLM_LORA=${USE_LLM_LORA:-${GRASP_DIRECT_USE_LLM_LORA}}
+LEARNING_RATE=${LEARNING_RATE:-${GRASP_DIRECT_LEARNING_RATE}}
+NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-${GRASP_DIRECT_NUM_TRAIN_EPOCHS}}
+MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-${GRASP_DIRECT_MAX_DYNAMIC_PATCH}}
+FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}
 SAVE_STRATEGY=${SAVE_STRATEGY:-epoch}
 SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-0}
@@ -26,7 +28,7 @@ MAX_SEQ_LENGTH=${MAX_SEQ_LENGTH:-2048}
 DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-4}
 OVERWRITE_OUTPUT_DIR=${OVERWRITE_OUTPUT_DIR:-False}
 
-DEFAULT_EXPERIMENT_NAME="lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}"
+DEFAULT_EXPERIMENT_NAME="baseline_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}"
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DEFAULT_EXPERIMENT_NAME}}
 
 export PYTHONPATH="${GP_ROOT}:$(pwd):${PYTHONPATH:-}"
@@ -35,24 +37,29 @@ export TF_CPP_MIN_LOG_LEVEL=3
 export TRANSFORMERS_VERBOSITY=${TRANSFORMERS_VERBOSITY:-${LOG_LEVEL}}
 export LAUNCHER=pytorch
 
-MODEL_PATH=${MODEL_PATH:-"${GP_ROOT}/InternVL/pretrained/OpenGVLab/InternVL2_5-1B"}
-META_PATH=${META_PATH:-"${GP_ROOT}/data/vcot_grasp/direct/internvl_meta_train.json"}
-OUTPUT_ROOT=${OUTPUT_ROOT:-"work_dirs/internvl_chat_v2_5/grasp_direct_hparams"}
+MODEL_PATH=${MODEL_PATH:-"${GRASP_MODEL_PATH}"}
+META_PATH=${META_PATH:-"${GRASP_DIRECT_META_PATH}"}
+DATA_INDEX_ROOT=${DATA_INDEX_ROOT:-"$(dirname "${META_PATH}")"}
+OUTPUT_ROOT=${OUTPUT_ROOT:-"${GRASP_DIRECT_RUN_ROOT}"}
 OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXPERIMENT_NAME}"}
 LOG_DIR=${LOG_DIR:-"${OUTPUT_DIR}/logs"}
 TRAINING_LOG_PATH=${TRAINING_LOG_PATH:-"${LOG_DIR}/train.log"}
 
-python "${GP_ROOT}/scripts/ensure_grasp_data.py" direct \
+stage "data check: ${EXPERIMENT_NAME}"
+python "${GP_ROOT}/data_tools/check_grasp_data.py" direct \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --splits train
 
+stage "config: ${EXPERIMENT_NAME}"
 mkdir -p "${LOG_DIR}"
 
 VCOT_CONFIG_PATH="${OUTPUT_DIR}/vcot_config.json"
-python "${GP_ROOT}/scripts/grasp_config.py" write \
+python "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
   --pipeline direct_grasp \
   --experiment-name "${EXPERIMENT_NAME}" \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --config-path "${VCOT_CONFIG_PATH}" \
   --use-llm-lora "${USE_LLM_LORA}" \
@@ -68,6 +75,7 @@ if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
   fi
 fi
 
+stage "train: ${EXPERIMENT_NAME}"
 torchrun \
   --nnodes=1 \
   --node_rank=0 \
@@ -118,10 +126,12 @@ torchrun \
   --report_to "tensorboard" \
   2>&1 | tee -a "${TRAINING_LOG_PATH}"
 
-python "${GP_ROOT}/scripts/grasp_config.py" write \
+stage "config copy: ${EXPERIMENT_NAME}"
+python "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
   --pipeline direct_grasp \
   --experiment-name "${EXPERIMENT_NAME}" \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --config-path "${VCOT_CONFIG_PATH}" \
   --use-llm-lora "${USE_LLM_LORA}" \

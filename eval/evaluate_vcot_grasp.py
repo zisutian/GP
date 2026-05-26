@@ -50,11 +50,15 @@ from internvl.train.dataset import build_transform, dynamic_preprocess
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
+from grasp_settings import build_settings
 
 
+SETTINGS = build_settings()
+DEFAULT_DATA_INDEX_ROOT = Path(SETTINGS["GRASP_VCOT_DEFAULT_INDEX_ROOT"])
+DEFAULT_OUT_DIR = Path(SETTINGS["GRASP_VCOT_RESULT_ROOT"])
 DEFAULT_DATASETS = {
-    "test_seen": "data/vcot_grasp/vcot/test_seen.jsonl",
-    "test_unseen": "data/vcot_grasp/vcot/test_unseen.jsonl",
+    "test_seen": "test_seen.jsonl",
+    "test_unseen": "test_unseen.jsonl",
 }
 
 
@@ -62,11 +66,10 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate predicted-bbox VCoT-style grasp pipeline.")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--datasets", default="test_seen,test_unseen")
-    parser.add_argument("--manifest-root", default=".")
     parser.add_argument(
-        "--dataset-root",
+        "--data-index-root",
         default=None,
-        help="Optional directory containing split manifests such as test_seen.jsonl.",
+        help="Override the checkpoint config data_index_root.",
     )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=1)
@@ -90,7 +93,7 @@ def parse_args():
         default=None,
         help="Optional explicit VCoT config JSON. Otherwise eval searches the checkpoint and its parent.",
     )
-    parser.add_argument("--out-dir", default=str(REPO_ROOT / "result/vcot_grasp_vcot"))
+    parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--vcot-iou-threshold", type=float, default=VCOT_IOU_THRESHOLD)
     parser.add_argument("--vcot-angle-threshold", type=float, default=VCOT_ANGLE_THRESHOLD)
@@ -221,6 +224,12 @@ def apply_vcot_config(args):
     )
     if args.max_num is None:
         args.max_num = int(config.get("max_dynamic_patch") or 6)
+    if args.data_index_root is None:
+        if not config.get("data_index_root"):
+            raise ValueError(f"{config_path} is missing data_index_root.")
+        args.data_index_root = str(Path(config["data_index_root"]).expanduser().resolve())
+    else:
+        args.data_index_root = str(Path(args.data_index_root).expanduser().resolve())
 
     if args.target_coordinate_frame not in {TARGET_FRAME_FULL_IMAGE, TARGET_FRAME_CROP_IMAGE}:
         raise ValueError(
@@ -625,6 +634,10 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
         )
         summary.update({
             "evaluation_mode": "predicted_vcot",
+            "dataset_name": name,
+            "split": name,
+            "data_index": str(manifest.resolve()),
+            "data_index_root": str(Path(args.data_index_root).resolve()),
             "checkpoint": args.checkpoint,
             "target_coordinate_frame": args.target_coordinate_frame,
             "bbox_edge_expand": args.bbox_edge_expand,
@@ -671,19 +684,15 @@ def main():
             "predicted VCoT pipeline: full image -> detect bbox -> predicted crop -> two-image grasp"
         )
 
-    root = Path(args.manifest_root)
-    dataset_root = Path(args.dataset_root) if args.dataset_root else None
+    data_index_root = Path(args.data_index_root)
     for dataset_name in args.datasets.split(","):
         dataset_name = dataset_name.strip()
         if not dataset_name:
             continue
-        if dataset_root is not None and dataset_name in DEFAULT_DATASETS:
-            manifest = dataset_root / f"{dataset_name}.jsonl"
-        else:
-            manifest = Path(DEFAULT_DATASETS.get(dataset_name, dataset_name))
-        if not manifest.is_absolute():
-            manifest = root / manifest
-        evaluate_dataset(args, model, tokenizer, dataset_name, manifest, image_size, use_thumbnail)
+        data_index = Path(DEFAULT_DATASETS.get(dataset_name, dataset_name))
+        if not data_index.is_absolute():
+            data_index = data_index_root / data_index
+        evaluate_dataset(args, model, tokenizer, dataset_name, data_index, image_size, use_thumbnail)
 
 
 if __name__ == "__main__":

@@ -5,6 +5,7 @@ import csv
 import io
 import json
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,8 +19,14 @@ from collect_checkpoint_manifest import infer as infer_checkpoint_manifest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
-DEFAULT_MASK_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/mask").resolve()
+sys.path.insert(0, str(REPO_ROOT))
+
+from grasp_settings import build_settings  # noqa: E402
+
+
+SETTINGS = build_settings()
+DEFAULT_GRASP_LMDB = Path(SETTINGS["GRASP_GRASP_LMDB"])
+DEFAULT_MASK_LMDB = Path(SETTINGS["GRASP_MASK_LMDB"])
 IMAGE_SIZE = 416
 
 GEOMETRY_LEVELS = {

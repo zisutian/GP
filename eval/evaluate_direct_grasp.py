@@ -27,26 +27,29 @@ from safetensors.torch import safe_open
 from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import AutoTokenizer
+from grasp_settings import build_settings
 
 
 LOC_RE = re.compile(r"<loc(\d{4})>")
 VCOT_IOU_THRESHOLD = 0.25
 VCOT_ANGLE_THRESHOLD = 30.0
+SETTINGS = build_settings()
+DEFAULT_DATA_INDEX_ROOT = Path(SETTINGS["GRASP_DIRECT_INDEX_ROOT"])
+DEFAULT_OUT_DIR = Path(SETTINGS["GRASP_DIRECT_RESULT_ROOT"])
 DEFAULT_DATASETS = {
-    "test_seen": "data/vcot_grasp/direct/test_seen.jsonl",
-    "test_unseen": "data/vcot_grasp/direct/test_unseen.jsonl",
+    "test_seen": "test_seen.jsonl",
+    "test_unseen": "test_unseen.jsonl",
 }
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Evaluate direct grasp generation on VCoT/Grasp-Anything manifests.")
+    parser = argparse.ArgumentParser(description="Evaluate direct grasp generation on Grasp-Anything data indexes.")
     parser.add_argument("--checkpoint", required=True)
     parser.add_argument("--datasets", default="test_seen,test_unseen")
-    parser.add_argument("--manifest-root", default=".")
     parser.add_argument(
-        "--dataset-root",
+        "--data-index-root",
         default=None,
-        help="Optional directory containing split manifests such as test_seen.jsonl.",
+        help="Override the checkpoint config data_index_root.",
     )
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=1)
@@ -54,7 +57,7 @@ def parse_args():
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-new-tokens", type=int, default=32)
     parser.add_argument("--max-num", type=int, default=None)
-    parser.add_argument("--out-dir", default=str(REPO_ROOT / "result/vcot_grasp_direct"))
+    parser.add_argument("--out-dir", default=str(DEFAULT_OUT_DIR))
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--vcot-iou-threshold", type=float, default=VCOT_IOU_THRESHOLD)
     parser.add_argument("--vcot-angle-threshold", type=float, default=VCOT_ANGLE_THRESHOLD)
@@ -454,6 +457,10 @@ def evaluate_dataset(args, model, tokenizer, name: str, manifest: Path, image_si
         )
         summary.update({
             "evaluation_mode": "direct_grasp",
+            "dataset_name": name,
+            "split": name,
+            "data_index": str(manifest.resolve()),
+            "data_index_root": str(Path(args.data_index_root).resolve()),
             "checkpoint": args.checkpoint,
             "loaded_vcot_config": args.loaded_vcot_config,
         })
@@ -475,6 +482,12 @@ def main():
     config_path = find_vcot_config(args.checkpoint)
     config = json.loads(config_path.read_text(encoding="utf-8"))
     args.loaded_vcot_config = str(config_path)
+    if args.data_index_root is None:
+        if not config.get("data_index_root"):
+            raise ValueError(f"{config_path} is missing data_index_root.")
+        args.data_index_root = str(Path(config["data_index_root"]).expanduser().resolve())
+    else:
+        args.data_index_root = str(Path(args.data_index_root).expanduser().resolve())
     if args.max_num is None:
         args.max_num = int(config.get("max_dynamic_patch") or 6)
     if int(os.getenv("WORLD_SIZE", "1")) > 1:
@@ -493,19 +506,15 @@ def main():
         print(f"checkpoint: {args.checkpoint}")
         print(f"image_size: {image_size}, use_thumbnail: {use_thumbnail}, max_num: {args.max_num}")
 
-    root = Path(args.manifest_root)
-    dataset_root = Path(args.dataset_root) if args.dataset_root else None
+    data_index_root = Path(args.data_index_root)
     for dataset_name in args.datasets.split(","):
         dataset_name = dataset_name.strip()
         if not dataset_name:
             continue
-        if dataset_root is not None and dataset_name in DEFAULT_DATASETS:
-            manifest = dataset_root / f"{dataset_name}.jsonl"
-        else:
-            manifest = Path(DEFAULT_DATASETS.get(dataset_name, dataset_name))
-        if not manifest.is_absolute():
-            manifest = root / manifest
-        evaluate_dataset(args, model, tokenizer, dataset_name, manifest, image_size, use_thumbnail)
+        data_index = Path(DEFAULT_DATASETS.get(dataset_name, dataset_name))
+        if not data_index.is_absolute():
+            data_index = data_index_root / data_index
+        evaluate_dataset(args, model, tokenizer, dataset_name, data_index, image_size, use_thumbnail)
 
 
 if __name__ == "__main__":

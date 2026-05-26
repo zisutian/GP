@@ -1,25 +1,27 @@
 set -euo pipefail
 set -x
 
-GPUS=${GPUS:-2}
-BATCH_SIZE=${BATCH_SIZE:-16}
-PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-4}
+GP_ROOT=${GP_ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"}
+source "${GP_ROOT}/scripts/grasp_runtime_helpers.sh"
+
+GPUS=${GPUS:-${GRASP_TRAIN_GPUS}}
+BATCH_SIZE=${BATCH_SIZE:-${GRASP_BATCH_SIZE}}
+PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-${GRASP_PER_DEVICE_BATCH_SIZE}}
 GRADIENT_ACC=$((BATCH_SIZE / PER_DEVICE_BATCH_SIZE / GPUS))
 LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
-GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
-cd "${GP_ROOT}/InternVL/internvl_chat"
+cd "${INTERNVL_CHAT_ROOT}"
 
-USE_LLM_LORA=${USE_LLM_LORA:-16}
-LEARNING_RATE=${LEARNING_RATE:-8e-5}
-NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-1}
-MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-6}
-BBOX_EDGE_EXPAND=${BBOX_EDGE_EXPAND:-15}
-MIN_BBOX_HALF_SIZE=${MIN_BBOX_HALF_SIZE:-50}
-TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME:-full_image}
-TARGET_GRASP_INDEX=${TARGET_GRASP_INDEX:-0}
-FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-448}
+USE_LLM_LORA=${USE_LLM_LORA:-${GRASP_CROP_USE_LLM_LORA}}
+LEARNING_RATE=${LEARNING_RATE:-${GRASP_CROP_LEARNING_RATE}}
+NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-${GRASP_CROP_NUM_TRAIN_EPOCHS}}
+MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-${GRASP_CROP_MAX_DYNAMIC_PATCH}}
+BBOX_EDGE_EXPAND=${BBOX_EDGE_EXPAND:-${GRASP_CROP_BBOX_EDGE_EXPAND}}
+MIN_BBOX_HALF_SIZE=${MIN_BBOX_HALF_SIZE:-${GRASP_CROP_MIN_BBOX_HALF_SIZE}}
+TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME:-${GRASP_CROP_TARGET_COORDINATE_FRAME}}
+TARGET_GRASP_INDEX=${TARGET_GRASP_INDEX:-${GRASP_CROP_TARGET_GRASP_INDEX}}
+FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}
 SAVE_STRATEGY=${SAVE_STRATEGY:-epoch}
 SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-0}
@@ -30,7 +32,23 @@ MAX_SEQ_LENGTH=${MAX_SEQ_LENGTH:-2048}
 DATALOADER_NUM_WORKERS=${DATALOADER_NUM_WORKERS:-4}
 OVERWRITE_OUTPUT_DIR=${OVERWRITE_OUTPUT_DIR:-False}
 
-DEFAULT_EXPERIMENT_NAME="crop_object_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${BBOX_EDGE_EXPAND}_half${MIN_BBOX_HALF_SIZE}"
+if [ "${TARGET_COORDINATE_FRAME}" = "crop_image" ]; then
+  TARGET_FRAME_TAG="frame"
+elif [ "${TARGET_COORDINATE_FRAME}" = "full_image" ] && [ "${BBOX_EDGE_EXPAND}" = "15" ] && [ "${MIN_BBOX_HALF_SIZE}" = "50" ]; then
+  TARGET_FRAME_TAG="object"
+elif [ "${TARGET_COORDINATE_FRAME}" = "full_image" ]; then
+  TARGET_FRAME_TAG="full"
+else
+  echo "Unsupported TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME}; expected full_image or crop_image." >&2
+  exit 1
+fi
+
+TARGET_GRASP_TAG=""
+if [ "${TARGET_GRASP_INDEX}" != "0" ]; then
+  TARGET_GRASP_TAG="_g${TARGET_GRASP_INDEX}"
+fi
+
+DEFAULT_EXPERIMENT_NAME="crop_${TARGET_FRAME_TAG}_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch${MAX_DYNAMIC_PATCH}_edge${BBOX_EDGE_EXPAND}_half${MIN_BBOX_HALF_SIZE}${TARGET_GRASP_TAG}"
 EXPERIMENT_NAME=${EXPERIMENT_NAME:-${DEFAULT_EXPERIMENT_NAME}}
 
 export PYTHONPATH="${GP_ROOT}:$(pwd):${PYTHONPATH:-}"
@@ -39,28 +57,33 @@ export TF_CPP_MIN_LOG_LEVEL=3
 export TRANSFORMERS_VERBOSITY=${TRANSFORMERS_VERBOSITY:-${LOG_LEVEL}}
 export LAUNCHER=pytorch
 
-MODEL_PATH=${MODEL_PATH:-"${GP_ROOT}/InternVL/pretrained/OpenGVLab/InternVL2_5-1B"}
-META_PATH=${META_PATH:-"${GP_ROOT}/data/vcot_grasp/crop/internvl_meta_train.json"}
-OUTPUT_ROOT=${OUTPUT_ROOT:-"work_dirs/internvl_chat_v2_5/grasp_crop_hparams"}
+MODEL_PATH=${MODEL_PATH:-"${GRASP_MODEL_PATH}"}
+META_PATH=${META_PATH:-"${GRASP_CROP_META_PATH}"}
+DATA_INDEX_ROOT=${DATA_INDEX_ROOT:-"$(dirname "${META_PATH}")"}
+OUTPUT_ROOT=${OUTPUT_ROOT:-"${GRASP_CROP_RUN_ROOT}"}
 OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXPERIMENT_NAME}"}
 LOG_DIR=${LOG_DIR:-"${OUTPUT_DIR}/logs"}
 TRAINING_LOG_PATH=${TRAINING_LOG_PATH:-"${LOG_DIR}/train.log"}
 
-python "${GP_ROOT}/scripts/ensure_grasp_data.py" crop \
+stage "data check: ${EXPERIMENT_NAME}"
+python "${GP_ROOT}/data_tools/check_grasp_data.py" crop \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --splits train \
   --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
   --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
   --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
   --target-grasp-index "${TARGET_GRASP_INDEX}"
 
+stage "config: ${EXPERIMENT_NAME}"
 mkdir -p "${LOG_DIR}"
 
 VCOT_CONFIG_PATH="${OUTPUT_DIR}/vcot_config.json"
-python "${GP_ROOT}/scripts/grasp_config.py" write \
+python "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
   --pipeline oracle_crop \
   --experiment-name "${EXPERIMENT_NAME}" \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --config-path "${VCOT_CONFIG_PATH}" \
   --use-llm-lora "${USE_LLM_LORA}" \
@@ -76,6 +99,7 @@ if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
   fi
 fi
 
+stage "train: ${EXPERIMENT_NAME}"
 torchrun \
   --nnodes=1 \
   --node_rank=0 \
@@ -126,10 +150,12 @@ torchrun \
   --report_to "tensorboard" \
   2>&1 | tee -a "${TRAINING_LOG_PATH}"
 
-python "${GP_ROOT}/scripts/grasp_config.py" write \
+stage "config copy: ${EXPERIMENT_NAME}"
+python "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
   --pipeline oracle_crop \
   --experiment-name "${EXPERIMENT_NAME}" \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --config-path "${VCOT_CONFIG_PATH}" \
   --use-llm-lora "${USE_LLM_LORA}" \

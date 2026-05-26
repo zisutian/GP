@@ -5,6 +5,7 @@ import io
 import json
 import os
 import random
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -23,11 +24,17 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_ANALYSIS_DIR = REPO_ROOT / "rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/analysis"
-DEFAULT_SUMMARY_CSV = REPO_ROOT / "rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/summary.csv"
+sys.path.insert(0, str(REPO_ROOT))
+
+from grasp_settings import build_settings  # noqa: E402
+
+
+SETTINGS = build_settings()
+DEFAULT_ANALYSIS_DIR = Path(SETTINGS["GRASP_ANALYSIS_ALL_ROOT"])
+DEFAULT_SUMMARY_CSV = Path(SETTINGS["GRASP_ANALYSIS_ALL_ROOT"]) / "summary.csv"
 DEFAULT_PIPELINE_CSV = DEFAULT_ANALYSIS_DIR / "methods/predicted_vcot/diagnostics/pipeline_summary.csv"
 DEFAULT_OUT_DIR = REPO_ROOT / "wrapper/direct_predicted_figures"
-DEFAULT_IMAGE_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/image").resolve()
+DEFAULT_IMAGE_LMDB = Path(SETTINGS["GRASP_IMAGE_LMDB"])
 IMAGE_SIZE = 416
 DIRECT_GRASP_PROMPT_TEMPLATE = "<image>\ngrasp the {obj_name}"
 PRED_VCOT_BBOX_PROMPT_TEMPLATE = "<image>\ndetect {obj_name}"

@@ -2,21 +2,21 @@
 set -euo pipefail
 
 GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${GP_ROOT}/grasp_paths.sh"
 cd "${GP_ROOT}"
 
-RESCORE_ROOT="${RESCORE_ROOT:-${GP_ROOT}/rescore_result}"
-ALL_METHODS_OUT_DIR="${ALL_METHODS_OUT_DIR:-${RESCORE_ROOT}/all_methods_direct_grasp_oracle_crop_predicted_vcot}"
-DIRECT_OUT_DIR="${DIRECT_OUT_DIR:-${RESCORE_ROOT}/task_direct_grasp_original_image}"
-DIRECT_ANALYSIS_DIR="${DIRECT_ANALYSIS_DIR:-${DIRECT_OUT_DIR}/analysis}"
+ALL_METHODS_OUT_DIR="${ALL_METHODS_OUT_DIR:-${GRASP_ANALYSIS_ALL_ROOT}}"
+DIRECT_OUT_DIR="${DIRECT_OUT_DIR:-${GRASP_ANALYSIS_DIRECT_ROOT}}"
+DIRECT_ANALYSIS_DIR="${DIRECT_ANALYSIS_DIR:-${DIRECT_OUT_DIR}}"
 DIRECT_SUMMARY_CSV="${DIRECT_SUMMARY_CSV:-${DIRECT_OUT_DIR}/summary.csv}"
 DIRECT_CHECKPOINT_CSV="${DIRECT_CHECKPOINT_CSV:-${DIRECT_OUT_DIR}/checkpoint_manifest.csv}"
-ORACLE_CROP_OUT_DIR="${ORACLE_CROP_OUT_DIR:-${RESCORE_ROOT}/task_oracle_crop_gt_mask_crop}"
-ORACLE_CROP_ANALYSIS_DIR="${ORACLE_CROP_ANALYSIS_DIR:-${ORACLE_CROP_OUT_DIR}/analysis}"
+ORACLE_CROP_OUT_DIR="${ORACLE_CROP_OUT_DIR:-${GRASP_ANALYSIS_ORACLE_CROP_ROOT}}"
+ORACLE_CROP_ANALYSIS_DIR="${ORACLE_CROP_ANALYSIS_DIR:-${ORACLE_CROP_OUT_DIR}}"
 ORACLE_CROP_SUMMARY_CSV="${ORACLE_CROP_SUMMARY_CSV:-${ORACLE_CROP_OUT_DIR}/summary.csv}"
 ORACLE_CROP_CHECKPOINT_CSV="${ORACLE_CROP_CHECKPOINT_CSV:-${ORACLE_CROP_OUT_DIR}/checkpoint_manifest.csv}"
-PREDICTED_VCOT_OUT_DIR="${PREDICTED_VCOT_OUT_DIR:-${RESCORE_ROOT}/task_predicted_vcot_two_stage_predicted_crop}"
+PREDICTED_VCOT_OUT_DIR="${PREDICTED_VCOT_OUT_DIR:-${GRASP_ANALYSIS_PREDICTED_VCOT_ROOT}}"
 OUT_DIR="${OUT_DIR:-${ALL_METHODS_OUT_DIR}}"
-ANALYSIS_DIR="${ANALYSIS_DIR:-${OUT_DIR}/analysis}"
+ANALYSIS_DIR="${ANALYSIS_DIR:-${OUT_DIR}}"
 SUMMARY_CSV="${SUMMARY_CSV:-${OUT_DIR}/summary.csv}"
 CHECKPOINT_CSV="${CHECKPOINT_CSV:-${OUT_DIR}/checkpoint_manifest.csv}"
 RUN_TASK_DIRECT="${RUN_TASK_DIRECT:-True}"
@@ -24,11 +24,11 @@ RUN_TASK_ORACLE_CROP="${RUN_TASK_ORACLE_CROP:-True}"
 RUN_TASK_PREDICTED_VCOT="${RUN_TASK_PREDICTED_VCOT:-True}"
 RUN_CROP_FRAME_PRIOR="${RUN_CROP_FRAME_PRIOR:-True}"
 CROP_FRAME_PRIOR_SAMPLE_LIMIT="${CROP_FRAME_PRIOR_SAMPLE_LIMIT:-5000}"
-DIRECT_RESULT_ROOT="${DIRECT_RESULT_ROOT:-result/vcot_grasp_direct}"
-ORACLE_CROP_RESULT_ROOT="${ORACLE_CROP_RESULT_ROOT:-result/vcot_grasp_crop}"
-VCOT_RESULT_ROOT="${VCOT_RESULT_ROOT:-result/vcot_grasp_vcot}"
+DIRECT_RESULT_ROOT="${DIRECT_RESULT_ROOT:-${GRASP_DIRECT_RESULT_ROOT}}"
+ORACLE_CROP_RESULT_ROOT="${ORACLE_CROP_RESULT_ROOT:-${GRASP_CROP_RESULT_ROOT}}"
+VCOT_RESULT_ROOT="${VCOT_RESULT_ROOT:-${GRASP_VCOT_RESULT_ROOT}}"
 VCOT_OUT_DIR="${VCOT_OUT_DIR:-${PREDICTED_VCOT_OUT_DIR}}"
-VCOT_ANALYSIS_DIR="${VCOT_ANALYSIS_DIR:-${VCOT_OUT_DIR}/analysis}"
+VCOT_ANALYSIS_DIR="${VCOT_ANALYSIS_DIR:-${VCOT_OUT_DIR}}"
 VCOT_SUMMARY_CSV="${VCOT_SUMMARY_CSV:-${VCOT_OUT_DIR}/summary.csv}"
 VCOT_CHECKPOINT_CSV="${VCOT_CHECKPOINT_CSV:-${VCOT_OUT_DIR}/checkpoint_manifest.csv}"
 
@@ -53,11 +53,41 @@ result_files_from_roots() {
     | sort
 }
 
-mapfile -t DIRECT_RESULT_FILES < <(result_files_from_roots "${DIRECT_RESULT_ROOT}")
-mapfile -t ORACLE_CROP_RESULT_FILES < <(result_files_from_roots "${ORACLE_CROP_RESULT_ROOT}")
-mapfile -t VCOT_RESULT_FILES < <(result_files_from_roots "${VCOT_RESULT_ROOT}")
+result_files_from_list() {
+  local list_path="$1"
+  shift
+  python analysis/filter_result_list.py --list "${list_path}" "$@"
+}
 
-RESULT_FILES=("${DIRECT_RESULT_FILES[@]}" "${ORACLE_CROP_RESULT_FILES[@]}" "${VCOT_RESULT_FILES[@]}")
+if [[ -n "${DIRECT_RESULT_LIST:-}" ]]; then
+  mapfile -t DIRECT_RESULT_FILES < <(result_files_from_list "${DIRECT_RESULT_LIST}")
+elif [[ -n "${RESULT_LIST:-}" ]]; then
+  mapfile -t DIRECT_RESULT_FILES < <(result_files_from_list "${RESULT_LIST}" --mode direct_grasp)
+else
+  mapfile -t DIRECT_RESULT_FILES < <(result_files_from_roots "${DIRECT_RESULT_ROOT}")
+fi
+
+if [[ -n "${ORACLE_CROP_RESULT_LIST:-}" ]]; then
+  mapfile -t ORACLE_CROP_RESULT_FILES < <(result_files_from_list "${ORACLE_CROP_RESULT_LIST}")
+elif [[ -n "${RESULT_LIST:-}" ]]; then
+  mapfile -t ORACLE_CROP_RESULT_FILES < <(result_files_from_list "${RESULT_LIST}" --mode oracle_crop)
+else
+  mapfile -t ORACLE_CROP_RESULT_FILES < <(result_files_from_roots "${ORACLE_CROP_RESULT_ROOT}")
+fi
+
+if [[ -n "${VCOT_RESULT_LIST:-}" ]]; then
+  mapfile -t VCOT_RESULT_FILES < <(result_files_from_list "${VCOT_RESULT_LIST}")
+elif [[ -n "${RESULT_LIST:-}" ]]; then
+  mapfile -t VCOT_RESULT_FILES < <(result_files_from_list "${RESULT_LIST}" --mode predicted_vcot)
+else
+  mapfile -t VCOT_RESULT_FILES < <(result_files_from_roots "${VCOT_RESULT_ROOT}")
+fi
+
+if [[ -n "${RESULT_LIST:-}" ]]; then
+  mapfile -t RESULT_FILES < <(result_files_from_list "${RESULT_LIST}")
+else
+  RESULT_FILES=("${DIRECT_RESULT_FILES[@]}" "${ORACLE_CROP_RESULT_FILES[@]}" "${VCOT_RESULT_FILES[@]}")
+fi
 
 if [[ "${#RESULT_FILES[@]}" -eq 0 ]]; then
   echo "No result JSON files found." >&2

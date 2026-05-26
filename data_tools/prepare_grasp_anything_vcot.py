@@ -12,11 +12,14 @@ sys.path.insert(0, str(REPO_ROOT))
 from data_tools.prepare_grasp_anything_bbox import write_split as write_bbox_split
 from data_tools.prepare_grasp_anything_crop import write_split as write_crop_split
 from data_tools.vcot_crop_lmdb import DEFAULT_BBOX_EDGE_EXPAND, DEFAULT_MIN_BBOX_HALF_SIZE
+from grasp_settings import build_settings
 
-DEFAULT_SOURCE_ROOT = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything").resolve()
-DEFAULT_CROP_ROOT = REPO_ROOT / "data/vcot_grasp/crop"
-DEFAULT_BBOX_ROOT = REPO_ROOT / "data/vcot_grasp/bbox"
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/vcot_grasp/vcot"
+
+SETTINGS = build_settings()
+DEFAULT_SOURCE_ROOT = Path(SETTINGS["GRASP_DATASET_ROOT"])
+DEFAULT_CROP_ROOT = Path(SETTINGS["GRASP_VCOT_DEFAULT_INDEX_ROOT"]) / "crop"
+DEFAULT_BBOX_ROOT = Path(SETTINGS["GRASP_BBOX_INDEX_ROOT"])
+DEFAULT_OUTPUT_ROOT = Path(SETTINGS["GRASP_VCOT_DEFAULT_INDEX_ROOT"])
 
 
 def parse_args():

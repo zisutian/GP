@@ -11,9 +11,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
 from data_tools.vcot_crop_lmdb import DEFAULT_BBOX_EDGE_EXPAND, DEFAULT_MIN_BBOX_HALF_SIZE
+from grasp_settings import build_settings
 
-DEFAULT_SOURCE_ROOT = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything").resolve()
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/vcot_grasp/crop"
+
+SETTINGS = build_settings()
+DEFAULT_SOURCE_ROOT = Path(SETTINGS["GRASP_DATASET_ROOT"])
+DEFAULT_OUTPUT_ROOT = Path(SETTINGS["GRASP_CROP_DEFAULT_INDEX_ROOT"])
 
 
 def parse_args():

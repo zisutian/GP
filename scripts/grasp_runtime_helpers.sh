@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 
+if [[ -z "${GP_ROOT:-}" ]]; then
+  GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+source "${GP_ROOT}/grasp_paths.sh"
+PYTHON_BIN="${PYTHON_BIN:-${GRASP_PYTHON_BIN}}"
+
+stage() {
+  echo
+  echo "===== $* ====="
+}
+
 has_checkpoint_artifact() {
   local work_dir="$1"
   find "${work_dir}" -maxdepth 1 -type d -name 'checkpoint-*' -print -quit 2>/dev/null | grep -q .
@@ -13,7 +24,6 @@ latest_checkpoint() {
 training_action() {
   local work_dir="$1"
   local overwrite_output_dir="$2"
-
   if [[ "${overwrite_output_dir}" == "True" ]]; then
     echo "train"
   elif has_checkpoint_artifact "${work_dir}"; then
@@ -26,12 +36,11 @@ training_action() {
 }
 
 prepare_eval_dir() {
-  local out_dir="$1"
-  mkdir -p "${out_dir}"
+  mkdir -p "$1"
 }
 
 should_run_eval() {
-  [[ "${RUN_EVAL:-1}" == "1" ]]
+  [[ "${RUN_EVAL:-${GRASP_RUN_EVAL}}" == "1" ]]
 }
 
 skip_eval_without_checkpoint() {
@@ -52,11 +61,8 @@ has_eval_result() {
 missing_eval_datasets() {
   local out_dir="$1"
   local datasets_csv="$2"
-  local overwrite_eval_results="${3:-${OVERWRITE_EVAL_RESULTS:-False}}"
-  local old_ifs
-  local datasets
-  local missing=()
-  local dataset
+  local overwrite_eval_results="$3"
+  local old_ifs datasets missing=() dataset
 
   if [[ "${overwrite_eval_results}" == "True" ]]; then
     echo "${datasets_csv}"
@@ -69,9 +75,7 @@ missing_eval_datasets() {
   IFS="${old_ifs}"
 
   for dataset in "${datasets[@]}"; do
-    if [[ -z "${dataset}" ]]; then
-      continue
-    fi
+    [[ -z "${dataset}" ]] && continue
     if ! has_eval_result "${out_dir}" "${dataset}"; then
       missing+=("${dataset}")
     fi
@@ -85,40 +89,30 @@ missing_eval_datasets() {
 
 default_dataset_splits() {
   local datasets_csv="$1"
-  local old_ifs
-  local datasets
-  local splits=()
-  local dataset
-
+  local old_ifs datasets splits=() dataset
   old_ifs="${IFS}"
   IFS=","
   read -r -a datasets <<< "${datasets_csv}"
   IFS="${old_ifs}"
-
   for dataset in "${datasets[@]}"; do
     case "${dataset}" in
-      test_seen|test_unseen)
-        splits+=("${dataset}")
-        ;;
+      test_seen|test_unseen) splits+=("${dataset}") ;;
     esac
   done
-
   old_ifs="${IFS}"
   IFS=" "
   echo "${splits[*]}"
   IFS="${old_ifs}"
 }
 
-require_dataset_root_splits() {
-  local dataset_root="$1"
+require_data_index_splits() {
+  local data_index_root="$1"
   local datasets_csv="$2"
-  local splits
   local split
-
-  splits="$(default_dataset_splits "${datasets_csv}")"
-  for split in ${splits}; do
-    if [[ ! -s "${dataset_root}/${split}.jsonl" ]]; then
-      echo "Missing dataset manifest: ${dataset_root}/${split}.jsonl" >&2
+  for split in $(default_dataset_splits "${datasets_csv}"); do
+    if [[ ! -s "${data_index_root}/${split}.jsonl" ]]; then
+      echo "Missing data index: ${data_index_root}/${split}.jsonl" >&2
+      echo "Run the data stage explicitly before eval." >&2
       return 1
     fi
   done

@@ -66,7 +66,7 @@ plot_direct_predicted_results.py
 
 用途：
 
-- 读取 `rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/summary.csv`
+- 读取 `artifacts/analysis/all/summary.csv`
 - 生成 direct 与 predicted VCoT 的成功率对比图
 - 生成 predicted VCoT 的 bbox/crop 诊断图
 - 从已有结果 JSON 和图像 LMDB 中抽样生成预测框可视化图
@@ -126,22 +126,22 @@ python wrapper/plot_direct_predicted_results.py \
 原始数据保持不动：
 
 ```text
-../VCoT-Grasp-self/data/grasp_anything/lmdb/
+grasp_settings.py: GRASP_DATASET_ROOT/lmdb/
 ```
 
-GP 目录只保存轻量 manifest：
+GP 目录只保存轻量 data_index：
 
 ```text
-data/vcot_grasp/direct/
+artifacts/data_index/direct/
   train.jsonl
   test_seen.jsonl
   test_unseen.jsonl
   internvl_meta_train.json
 ```
 
-manifest 每行只保存 LMDB key 和目标名，不保存图片本体。
+data_index 每行只保存 LMDB key 和目标名，不保存图片本体。
 
-生成 manifest；训练和评估入口也会在缺失时自动重建默认 manifest：
+生成 data_index；训练和评估入口也会在缺失时自动重建默认 data_index：
 
 ```bash
 cd /home/2025201095KZJ1/code/VCoTGrasp/GP
@@ -152,7 +152,7 @@ conda run -n 260513-internvl python data_tools/prepare_grasp_anything_direct.py
 
 ```bash
 conda run -n 260513-internvl python data_tools/inspect_grasp_anything_direct.py \
-  --manifest data/vcot_grasp/direct/train.jsonl \
+  --manifest artifacts/data_index/direct/train.jsonl \
   --index 0
 ```
 

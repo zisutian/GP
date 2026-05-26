@@ -16,10 +16,15 @@ from collect_checkpoint_manifest import infer as infer_checkpoint_manifest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ANALYSIS_ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(ANALYSIS_ROOT))
 
-DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
-DEFAULT_MASK_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/mask").resolve()
+from grasp_settings import build_settings  # noqa: E402
+
+
+SETTINGS = build_settings()
+DEFAULT_GRASP_LMDB = Path(SETTINGS["GRASP_GRASP_LMDB"])
+DEFAULT_MASK_LMDB = Path(SETTINGS["GRASP_MASK_LMDB"])
 IMAGE_SIZE = 416
 
 
@@ -196,6 +201,7 @@ def write_summary_csv(rows: list[dict], path: Path):
         "evaluation_mode",
         "checkpoint",
         "loaded_vcot_config",
+        "data_index_root",
         "target_coordinate_frame",
         "bbox_edge_expand",
         "min_bbox_half_size",
@@ -287,6 +293,7 @@ def main():
             "evaluation_mode": manifest_info.get("evaluation_mode", ""),
             "checkpoint": manifest_info.get("latest_checkpoint", ""),
             "loaded_vcot_config": manifest_info.get("loaded_vcot_config", ""),
+            "data_index_root": manifest_info.get("data_index_root", ""),
             "target_coordinate_frame": manifest_info.get("target_coordinate_frame", ""),
             "bbox_edge_expand": manifest_info.get("bbox_edge_expand", ""),
             "min_bbox_half_size": manifest_info.get("min_bbox_half_size", ""),

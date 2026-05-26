@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -12,14 +13,19 @@ import pandas as pd
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_WORK_DIR = REPO_ROOT / "InternVL/internvl_chat/work_dirs/internvl_chat_v2_5"
+sys.path.insert(0, str(REPO_ROOT))
+
+from grasp_settings import build_settings  # noqa: E402
+
+
+SETTINGS = build_settings()
 DEFAULT_OUT_DIR = REPO_ROOT / "wrapper/tensorboard_loss_figures"
 DEFAULT_TAG = "train/loss"
 
 DEFAULT_GROUPS = {
-    "direct": DEFAULT_WORK_DIR / "grasp_direct_hparams",
-    "crop": DEFAULT_WORK_DIR / "grasp_crop_hparams",
-    "predict": DEFAULT_WORK_DIR / "grasp_vcot_hparams",
+    "direct": Path(SETTINGS["GRASP_DIRECT_RUN_ROOT"]),
+    "crop": Path(SETTINGS["GRASP_CROP_RUN_ROOT"]),
+    "predict": Path(SETTINGS["GRASP_VCOT_RUN_ROOT"]),
 }
 
 GROUP_TITLES = {

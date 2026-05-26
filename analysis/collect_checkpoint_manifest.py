@@ -21,14 +21,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def split_name(path: Path) -> str:
-    if "test_unseen" in path.name:
-        return "test_unseen"
-    if "test_seen" in path.name:
-        return "test_seen"
-    return "unknown"
-
-
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -70,6 +62,7 @@ def infer(path: Path) -> dict[str, str]:
         raise ValueError(f"Unsupported evaluation_mode for {path}: {evaluation_mode}")
     method = EVALUATION_MODE_TO_METHOD[evaluation_mode]
     experiment = str(config["experiment_name"])
+    split = str(required_summary_value(summary, "split", path))
     uses_crop_contract = evaluation_mode in {"oracle_crop", "predicted_vcot"}
 
     def crop_summary_value(key: str) -> str:
@@ -80,7 +73,7 @@ def infer(path: Path) -> dict[str, str]:
     return {
         "method": method,
         "experiment": experiment,
-        "split": split_name(path),
+        "split": split,
         "result_path": str(path),
         "evaluation_mode": evaluation_mode,
         "target_coordinate_frame": crop_summary_value("target_coordinate_frame"),
@@ -88,6 +81,7 @@ def infer(path: Path) -> dict[str, str]:
         "min_bbox_half_size": crop_summary_value("min_bbox_half_size"),
         "target_grasp_index": crop_summary_value("target_grasp_index"),
         "work_dir": str(work_path),
+        "data_index_root": csv_value(config.get("data_index_root", "")),
         "latest_checkpoint": str(checkpoint),
         "checkpoint_exists": "True",
         "loaded_vcot_config": str(config_path),
@@ -111,6 +105,7 @@ def main():
         "min_bbox_half_size",
         "target_grasp_index",
         "work_dir",
+        "data_index_root",
         "latest_checkpoint",
         "checkpoint_exists",
         "loaded_vcot_config",

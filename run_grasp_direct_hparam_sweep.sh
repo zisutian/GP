@@ -2,27 +2,33 @@
 set -euo pipefail
 
 GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${GP_ROOT}/scripts/grasp_run_common.sh"
+source "${GP_ROOT}/scripts/grasp_runtime_helpers.sh"
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
-GPUS="${GPUS:-2}"
-BATCH_SIZE="${BATCH_SIZE:-16}"
-PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
-RUN_EVAL="${RUN_EVAL:-1}"
-OVERWRITE_EVAL_RESULTS="${OVERWRITE_EVAL_RESULTS:-False}"
-EVAL_DATASETS="${EVAL_DATASETS:-test_seen,test_unseen}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
-FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-448}"
-TRAIN_SCRIPT="${GP_ROOT}/InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/internvl2_5_1b_grasp_direct_lmdb_lora.sh"
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${GRASP_DIRECT_CUDA_VISIBLE_DEVICES}}"
+GPUS="${GPUS:-${GRASP_TRAIN_GPUS}}"
+BATCH_SIZE="${BATCH_SIZE:-${GRASP_BATCH_SIZE}}"
+PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-${GRASP_PER_DEVICE_BATCH_SIZE}}"
+RUN_EVAL="${RUN_EVAL:-${GRASP_RUN_EVAL}}"
+OVERWRITE_EVAL_RESULTS="${OVERWRITE_EVAL_RESULTS:-${GRASP_OVERWRITE_EVAL_RESULTS}}"
+EVAL_DATASETS="${EVAL_DATASETS:-${GRASP_EVAL_DATASETS}}"
+PYTHON_BIN="${PYTHON_BIN:-${GRASP_PYTHON_BIN}}"
+FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}"
+TRAIN_SCRIPT="${TRAIN_SCRIPT:-${GRASP_DIRECT_TRAIN_SCRIPT}}"
 
 export CUDA_VISIBLE_DEVICES
 
-prepare_meta() {
-  local meta_path="${GP_ROOT}/data/vcot_grasp/direct/internvl_meta_train.json"
-  "${PYTHON_BIN}" "${GP_ROOT}/scripts/ensure_grasp_data.py" direct \
+require_direct_data() {
+  local meta_path="$1"
+  local splits=(train)
+  if should_run_eval; then
+    for split in $(default_dataset_splits "${EVAL_DATASETS}"); do
+      splits+=("${split}")
+    done
+  fi
+  "${PYTHON_BIN}" "${GP_ROOT}/data_tools/check_grasp_data.py" direct \
     --meta-path "${meta_path}" \
-    --splits train test_seen test_unseen >&2
-  echo "${meta_path}"
+    --data-index-root "${GRASP_DIRECT_INDEX_ROOT}" \
+    --splits "${splits[@]}"
 }
 
 write_config() {
@@ -33,10 +39,11 @@ write_config() {
   local max_dynamic_patch="$5"
   local meta_path="$6"
   local work_dir="$7"
-  "${PYTHON_BIN}" "${GP_ROOT}/scripts/grasp_config.py" write \
+  "${PYTHON_BIN}" "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
     --pipeline direct_grasp \
     --experiment-name "${name}" \
     --meta-path "${meta_path}" \
+    --data-index-root "${GRASP_DIRECT_INDEX_ROOT}" \
     --output-dir "${work_dir}" \
     --use-llm-lora "${lora_rank}" \
     --learning-rate "${learning_rate}" \
@@ -52,16 +59,21 @@ run_experiment() {
   local learning_rate="$3"
   local epochs="$4"
   local max_dynamic_patch="$5"
-  local work_dir="${GP_ROOT}/InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_direct_hparams/${name}"
-  local out_dir="${GP_ROOT}/result/vcot_grasp_direct/hparams/${name}"
+  local work_dir="${GRASP_DIRECT_RUN_ROOT}/${name}"
+  local out_dir="${GRASP_DIRECT_RESULT_ROOT}/${name}"
   local overwrite_output_dir="${OVERWRITE_OUTPUT_DIR:-False}"
   local meta_path
   local eval_datasets
   local eval_overwrite
   local action
 
-  echo "===== ${name} ====="
-  meta_path="$(prepare_meta)"
+  stage "experiment: ${name}"
+  meta_path="${GRASP_DIRECT_META_PATH}"
+
+  stage "data check"
+  require_direct_data "${meta_path}"
+
+  stage "train"
   action="$(training_action "${work_dir}" "${overwrite_output_dir}")"
   if [[ "${action}" == "skip" ]]; then
     echo "Skip training: existing checkpoint found in ${work_dir}"
@@ -77,7 +89,11 @@ run_experiment() {
     NUM_TRAIN_EPOCHS="${epochs}" \
     MAX_DYNAMIC_PATCH="${max_dynamic_patch}" \
     FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE}" \
-    TRAINING_LOG_PATH="work_dirs/internvl_chat_v2_5/grasp_direct_hparams/${name}/logs/train.log" \
+    GRASP_DATASET_ROOT="${GRASP_DATASET_ROOT}" \
+    DATA_INDEX_ROOT="${GRASP_DIRECT_INDEX_ROOT}" \
+    OUTPUT_ROOT="${GRASP_DIRECT_RUN_ROOT}" \
+    MODEL_PATH="${GRASP_MODEL_PATH}" \
+    TRAINING_LOG_PATH="${work_dir}/logs/train.log" \
     OVERWRITE_OUTPUT_DIR="${overwrite_output_dir}" \
     GPUS="${GPUS}" \
     BATCH_SIZE="${BATCH_SIZE}" \
@@ -85,9 +101,11 @@ run_experiment() {
     bash "${TRAIN_SCRIPT}"
   fi
 
+  stage "config"
   write_config "${name}" "${lora_rank}" "${learning_rate}" "${epochs}" "${max_dynamic_patch}" "${meta_path}" "${work_dir}"
 
   if should_run_eval; then
+    stage "eval"
     if skip_eval_without_checkpoint "${work_dir}"; then
       return
     fi
@@ -106,18 +124,16 @@ run_experiment() {
     fi
     WORK_DIR="${work_dir}" \
     OUT_DIR="${out_dir}" \
-    GPUS=1 \
+    GPUS="${GRASP_EVAL_GPUS}" \
     DATASETS="${eval_datasets}" \
     bash "${GP_ROOT}/eval/eval_grasp_direct_lmdb_lora.sh" \
       2>&1 | tee -a "${out_dir}/${name}.eval.log"
+  else
+    stage "eval"
+    echo "Skip eval: RUN_EVAL=${RUN_EVAL}"
   fi
 }
 
-run_experiment "baseline_lora16_lr4e-5_ep1_patch6" 16 4e-5 1 6
-run_experiment "lora8_lr4e-5_ep1_patch6" 8 4e-5 1 6
-run_experiment "lora32_lr4e-5_ep1_patch6" 32 4e-5 1 6
-run_experiment "lora16_lr2e-5_ep1_patch6" 16 2e-5 1 6
-run_experiment "lora16_lr8e-5_ep1_patch6" 16 8e-5 1 6
-run_experiment "lora16_lr4e-5_ep2_patch6" 16 4e-5 2 6
-run_experiment "lora16_lr4e-5_ep1_patch4" 16 4e-5 1 4
-run_experiment "lora16_lr4e-5_ep1_patch1" 16 4e-5 1 1
+while IFS=$'\t' read -r name lora_rank learning_rate epochs max_dynamic_patch; do
+  run_experiment "${name}" "${lora_rank}" "${learning_rate}" "${epochs}" "${max_dynamic_patch}"
+done < <("${PYTHON_BIN}" "${GP_ROOT}/grasp_settings.py" experiments direct)

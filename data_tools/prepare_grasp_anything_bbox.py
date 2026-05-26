@@ -3,12 +3,19 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE_ROOT = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything").resolve()
-DEFAULT_OUTPUT_ROOT = REPO_ROOT / "data/vcot_grasp/bbox"
+sys.path.insert(0, str(REPO_ROOT))
+
+from grasp_settings import build_settings
+
+
+SETTINGS = build_settings()
+DEFAULT_SOURCE_ROOT = Path(SETTINGS["GRASP_DATASET_ROOT"])
+DEFAULT_OUTPUT_ROOT = Path(SETTINGS["GRASP_BBOX_INDEX_ROOT"])
 
 
 def parse_args():

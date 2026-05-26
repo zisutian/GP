@@ -14,26 +14,35 @@ from data_tools.prepare_grasp_anything_bbox import write_split as write_bbox_spl
 from data_tools.prepare_grasp_anything_crop import write_split as write_crop_split
 from data_tools.prepare_grasp_anything_direct import write_split as write_direct_split
 from data_tools.vcot_crop_lmdb import DEFAULT_BBOX_EDGE_EXPAND, DEFAULT_MIN_BBOX_HALF_SIZE
+from grasp_settings import build_settings, experiment_rows
 
 
-DEFAULT_SOURCE_ROOT = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything").resolve()
-DEFAULT_DIRECT_META = REPO_ROOT / "data/vcot_grasp/direct/internvl_meta_train.json"
-DEFAULT_CROP_META = REPO_ROOT / "data/vcot_grasp/crop/internvl_meta_train.json"
-DEFAULT_VCOT_META = REPO_ROOT / "data/vcot_grasp/vcot/internvl_meta_train.json"
-DEFAULT_BBOX_ROOT = REPO_ROOT / "data/vcot_grasp/bbox"
+SETTINGS = build_settings()
+DEFAULT_SOURCE_ROOT = Path(SETTINGS["GRASP_DATASET_ROOT"])
+DEFAULT_DIRECT_META = Path(SETTINGS["GRASP_DIRECT_META_PATH"])
+DEFAULT_CROP_META = Path(SETTINGS["GRASP_CROP_META_PATH"])
+DEFAULT_VCOT_META = Path(SETTINGS["GRASP_VCOT_META_PATH"])
+DEFAULT_BBOX_ROOT = Path(SETTINGS["GRASP_BBOX_INDEX_ROOT"])
+DEFAULT_BBOX_META = DEFAULT_BBOX_ROOT / "internvl_meta_train.json"
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Ensure Grasp-Anything manifest/meta files exist.")
+    parser = argparse.ArgumentParser(description="Ensure Grasp-Anything data_index/meta files exist.")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    direct = subparsers.add_parser("direct", help="Ensure direct-grasp manifests and train meta.")
+    direct = subparsers.add_parser("direct", help="Ensure direct-grasp data indexes and train meta.")
     direct.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
     direct.add_argument("--meta-path", default=str(DEFAULT_DIRECT_META))
     direct.add_argument("--output-root", default=None)
     direct.add_argument("--splits", nargs="+", default=["train"])
 
-    crop = subparsers.add_parser("crop", help="Ensure oracle-crop manifests and train meta.")
+    bbox = subparsers.add_parser("bbox", help="Ensure bbox-detection data indexes and train meta.")
+    bbox.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    bbox.add_argument("--meta-path", default=str(DEFAULT_BBOX_META))
+    bbox.add_argument("--output-root", default=None)
+    bbox.add_argument("--splits", nargs="+", default=["train"])
+
+    crop = subparsers.add_parser("crop", help="Ensure oracle-crop data indexes and train meta.")
     crop.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
     crop.add_argument("--meta-path", default=str(DEFAULT_CROP_META))
     crop.add_argument("--output-root", default=None)
@@ -43,7 +52,7 @@ def parse_args() -> argparse.Namespace:
     crop.add_argument("--target-coordinate-frame", choices=["full_image", "crop_image"], default="full_image")
     crop.add_argument("--target-grasp-index", type=int, default=0)
 
-    vcot = subparsers.add_parser("vcot", help="Ensure VCoT joint train meta and eval manifests.")
+    vcot = subparsers.add_parser("vcot", help="Ensure VCoT joint train meta and eval data indexes.")
     vcot.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
     vcot.add_argument("--meta-path", default=str(DEFAULT_VCOT_META))
     vcot.add_argument("--output-root", default=None)
@@ -55,6 +64,11 @@ def parse_args() -> argparse.Namespace:
     vcot.add_argument("--min-bbox-half-size", type=int, default=DEFAULT_MIN_BBOX_HALF_SIZE)
     vcot.add_argument("--target-coordinate-frame", choices=["full_image", "crop_image"], default="full_image")
     vcot.add_argument("--target-grasp-index", type=int, default=0)
+
+    all_data = subparsers.add_parser("all", help="Ensure data indexes/meta for every configured experiment.")
+    all_data.add_argument("--source-root", default=str(DEFAULT_SOURCE_ROOT))
+    all_data.add_argument("--splits", nargs="+", default=["train", "test_seen", "test_unseen"])
+    all_data.add_argument("--eval-splits", nargs="+", default=["test_seen", "test_unseen"])
 
     return parser.parse_args()
 
@@ -142,7 +156,7 @@ def require_crop_manifest_config(
         target_grasp_index,
     ):
         raise ValueError(
-            f"Existing crop manifest does not match requested config: {path}. "
+            f"Existing crop data index does not match requested config: {path}. "
             "Use a separate output root or regenerate it explicitly."
         )
 
@@ -157,6 +171,25 @@ def write_direct_meta(meta_path: Path, output_root: Path, train_length: int) -> 
             "length": train_length,
             "vcot_dataset": "grasp_anything_direct",
             "vcot_image_size": 416,
+        }
+    }
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(json.dumps(train_meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"meta: {meta_path}")
+
+
+def write_bbox_meta(meta_path: Path, output_root: Path, train_length: int) -> None:
+    train_meta = {
+        "grasp_anything_bbox_train": {
+            "root": "",
+            "annotation": str(output_root / "train.jsonl"),
+            "data_augment": False,
+            "repeat_time": 1,
+            "length": train_length,
+            "vcot_dataset": "grasp_anything_bbox",
+            "vcot_image_size": 416,
+            "vcot_target_coordinate_frame": "full_image",
+            "vcot_target_bbox_order": "xyxy",
         }
     }
     meta_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +243,24 @@ def ensure_direct(args: argparse.Namespace) -> None:
 
     train_length = count_jsonl(output_root / "train.jsonl")
     write_direct_meta(meta_path, output_root, train_length)
+
+
+def ensure_bbox(args: argparse.Namespace) -> None:
+    source_root = Path(args.source_root).expanduser().resolve()
+    meta_path = Path(args.meta_path).expanduser().resolve()
+    output_root = Path(args.output_root).expanduser().resolve() if args.output_root else meta_path.parent
+    splits = normalize_names(["train", *args.splits])
+
+    missing_from_meta = {path.stem for path in missing_annotations(meta_path)}
+    for split in normalize_names([*splits, *missing_from_meta]):
+        ensure_split_name(split)
+        output_path = output_root / f"{split}.jsonl"
+        if not exists_nonempty(output_path):
+            written = write_bbox_split(source_root, output_path, split, limit=None)
+            print(f"{split}: wrote {written} rows -> {output_path}")
+
+    train_length = count_jsonl(output_root / "train.jsonl")
+    write_bbox_meta(meta_path, output_root, train_length)
 
 
 def ensure_crop(args: argparse.Namespace) -> None:
@@ -373,14 +424,79 @@ def ensure_vcot(args: argparse.Namespace) -> None:
     )
 
 
+def ensure_all(args: argparse.Namespace) -> None:
+    source_root = Path(args.source_root).expanduser().resolve()
+    splits = normalize_names(args.splits)
+    eval_splits = normalize_names(args.eval_splits)
+
+    ensure_direct(argparse.Namespace(
+        source_root=str(source_root),
+        meta_path=SETTINGS["GRASP_DIRECT_META_PATH"],
+        output_root=SETTINGS["GRASP_DIRECT_INDEX_ROOT"],
+        splits=splits,
+    ))
+    ensure_bbox(argparse.Namespace(
+        source_root=str(source_root),
+        meta_path=str(DEFAULT_BBOX_META),
+        output_root=SETTINGS["GRASP_BBOX_INDEX_ROOT"],
+        splits=splits,
+    ))
+
+    for row in experiment_rows("crop", SETTINGS):
+        name, _use_lora, _lr, _epochs, edge_expand, min_half, target_frame, _patch, target_grasp_index = row
+        index_root = Path(SETTINGS["GRASP_CROP_INDEX_ROOT"]) / name
+        ensure_crop(argparse.Namespace(
+            source_root=str(source_root),
+            meta_path=str(index_root / "internvl_meta_train.json"),
+            output_root=str(index_root),
+            splits=splits,
+            bbox_edge_expand=int(edge_expand),
+            min_bbox_half_size=int(min_half),
+            target_coordinate_frame=target_frame,
+            target_grasp_index=int(target_grasp_index),
+        ))
+
+    for row in experiment_rows("vcot", SETTINGS):
+        (
+            name,
+            _use_lora,
+            _lr,
+            _epochs,
+            bbox_ratio,
+            edge_expand,
+            min_half,
+            target_frame,
+            _patch,
+            target_grasp_index,
+        ) = row
+        index_root = Path(SETTINGS["GRASP_VCOT_INDEX_ROOT"]) / name
+        ensure_vcot(argparse.Namespace(
+            source_root=str(source_root),
+            meta_path=str(index_root / "internvl_meta_train.json"),
+            output_root=str(index_root),
+            crop_root=str(index_root / "crop"),
+            bbox_root=SETTINGS["GRASP_BBOX_INDEX_ROOT"],
+            eval_splits=eval_splits,
+            bbox_ratio=float(bbox_ratio),
+            bbox_edge_expand=int(edge_expand),
+            min_bbox_half_size=int(min_half),
+            target_coordinate_frame=target_frame,
+            target_grasp_index=int(target_grasp_index),
+        ))
+
+
 def main() -> None:
     args = parse_args()
     if args.command == "direct":
         ensure_direct(args)
+    elif args.command == "bbox":
+        ensure_bbox(args)
     elif args.command == "crop":
         ensure_crop(args)
     elif args.command == "vcot":
         ensure_vcot(args)
+    elif args.command == "all":
+        ensure_all(args)
     else:
         raise ValueError(args.command)
 

@@ -1,26 +1,28 @@
 set -euo pipefail
 set -x
 
-GPUS=${GPUS:-2}
-BATCH_SIZE=${BATCH_SIZE:-16}
-PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-4}
+GP_ROOT=${GP_ROOT:-"$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)"}
+source "${GP_ROOT}/scripts/grasp_runtime_helpers.sh"
+
+GPUS=${GPUS:-${GRASP_TRAIN_GPUS}}
+BATCH_SIZE=${BATCH_SIZE:-${GRASP_BATCH_SIZE}}
+PER_DEVICE_BATCH_SIZE=${PER_DEVICE_BATCH_SIZE:-${GRASP_PER_DEVICE_BATCH_SIZE}}
 GRADIENT_ACC=$((BATCH_SIZE / PER_DEVICE_BATCH_SIZE / GPUS))
 LOG_LEVEL=${LOG_LEVEL:-warning}
 LOG_LEVEL_REPLICA=${LOG_LEVEL_REPLICA:-error}
-GP_ROOT=${GP_ROOT:-"/home/2025201095KZJ1/code/VCoTGrasp/GP"}
 
-cd "${GP_ROOT}/InternVL/internvl_chat"
+cd "${INTERNVL_CHAT_ROOT}"
 
-USE_LLM_LORA=${USE_LLM_LORA:-16}
-LEARNING_RATE=${LEARNING_RATE:-8e-5}
-NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-1}
-MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-6}
-BBOX_RATIO=${BBOX_RATIO:-0.5}
-BBOX_EDGE_EXPAND=${BBOX_EDGE_EXPAND:-15}
-MIN_BBOX_HALF_SIZE=${MIN_BBOX_HALF_SIZE:-50}
-TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME:-full_image}
-TARGET_GRASP_INDEX=${TARGET_GRASP_INDEX:-0}
-FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-448}
+USE_LLM_LORA=${USE_LLM_LORA:-${GRASP_VCOT_USE_LLM_LORA}}
+LEARNING_RATE=${LEARNING_RATE:-${GRASP_VCOT_LEARNING_RATE}}
+NUM_TRAIN_EPOCHS=${NUM_TRAIN_EPOCHS:-${GRASP_VCOT_NUM_TRAIN_EPOCHS}}
+MAX_DYNAMIC_PATCH=${MAX_DYNAMIC_PATCH:-${GRASP_VCOT_MAX_DYNAMIC_PATCH}}
+BBOX_RATIO=${BBOX_RATIO:-${GRASP_VCOT_BBOX_RATIO}}
+BBOX_EDGE_EXPAND=${BBOX_EDGE_EXPAND:-${GRASP_VCOT_BBOX_EDGE_EXPAND}}
+MIN_BBOX_HALF_SIZE=${MIN_BBOX_HALF_SIZE:-${GRASP_VCOT_MIN_BBOX_HALF_SIZE}}
+TARGET_COORDINATE_FRAME=${TARGET_COORDINATE_FRAME:-${GRASP_VCOT_TARGET_COORDINATE_FRAME}}
+TARGET_GRASP_INDEX=${TARGET_GRASP_INDEX:-${GRASP_VCOT_TARGET_GRASP_INDEX}}
+FORCE_IMAGE_SIZE=${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}
 SAVE_STRATEGY=${SAVE_STRATEGY:-epoch}
 SAVE_STEPS=${SAVE_STEPS:-200}
 SAVE_TOTAL_LIMIT=${SAVE_TOTAL_LIMIT:-0}
@@ -49,33 +51,36 @@ export TF_CPP_MIN_LOG_LEVEL=3
 export TRANSFORMERS_VERBOSITY=${TRANSFORMERS_VERBOSITY:-${LOG_LEVEL}}
 export LAUNCHER=pytorch
 
-MODEL_PATH=${MODEL_PATH:-"${GP_ROOT}/InternVL/pretrained/OpenGVLab/InternVL2_5-1B"}
-META_PATH=${META_PATH:-"${GP_ROOT}/data/vcot_grasp/vcot_hparams/${EXPERIMENT_NAME}/internvl_meta_train.json"}
-CROP_ROOT=${CROP_ROOT:-"${GP_ROOT}/data/vcot_grasp/vcot_hparams/${EXPERIMENT_NAME}/crop"}
-BBOX_ROOT=${BBOX_ROOT:-"${GP_ROOT}/data/vcot_grasp/bbox"}
-OUTPUT_ROOT=${OUTPUT_ROOT:-"work_dirs/internvl_chat_v2_5/grasp_vcot_hparams"}
+MODEL_PATH=${MODEL_PATH:-"${GRASP_MODEL_PATH}"}
+META_PATH=${META_PATH:-"${GRASP_VCOT_INDEX_ROOT}/${EXPERIMENT_NAME}/internvl_meta_train.json"}
+DATA_INDEX_ROOT=${DATA_INDEX_ROOT:-"$(dirname "${META_PATH}")"}
+CROP_ROOT=${CROP_ROOT:-"${GRASP_VCOT_INDEX_ROOT}/${EXPERIMENT_NAME}/crop"}
+BBOX_ROOT=${BBOX_ROOT:-"${GRASP_BBOX_INDEX_ROOT}"}
+OUTPUT_ROOT=${OUTPUT_ROOT:-"${GRASP_VCOT_RUN_ROOT}"}
 OUTPUT_DIR=${OUTPUT_DIR:-"${OUTPUT_ROOT}/${EXPERIMENT_NAME}"}
 LOG_DIR=${LOG_DIR:-"${OUTPUT_DIR}/logs"}
 TRAINING_LOG_PATH=${TRAINING_LOG_PATH:-"${LOG_DIR}/train.log"}
 
-python "${GP_ROOT}/scripts/ensure_grasp_data.py" vcot \
+stage "data check: ${EXPERIMENT_NAME}"
+python "${GP_ROOT}/data_tools/check_grasp_data.py" vcot \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --crop-root "${CROP_ROOT}" \
   --bbox-root "${BBOX_ROOT}" \
-  --output-root "$(dirname "${META_PATH}")" \
-  --bbox-ratio "${BBOX_RATIO}" \
   --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
   --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \
   --target-coordinate-frame "${TARGET_COORDINATE_FRAME}" \
   --target-grasp-index "${TARGET_GRASP_INDEX}"
 
+stage "config: ${EXPERIMENT_NAME}"
 mkdir -p "${LOG_DIR}"
 
 VCOT_CONFIG_PATH="${OUTPUT_DIR}/vcot_config.json"
-python "${GP_ROOT}/scripts/grasp_config.py" write \
+python "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
   --pipeline predicted_vcot \
   --experiment-name "${EXPERIMENT_NAME}" \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --config-path "${VCOT_CONFIG_PATH}" \
   --model-path "${MODEL_PATH}" \
@@ -99,6 +104,7 @@ if [ -d "${OUTPUT_DIR}" ] && [ "${OVERWRITE_OUTPUT_DIR}" != "True" ]; then
   fi
 fi
 
+stage "train: ${EXPERIMENT_NAME}"
 torchrun \
   --nnodes=1 \
   --node_rank=0 \
@@ -149,10 +155,12 @@ torchrun \
   --report_to "tensorboard" \
   2>&1 | tee -a "${TRAINING_LOG_PATH}"
 
-python "${GP_ROOT}/scripts/grasp_config.py" write \
+stage "config copy: ${EXPERIMENT_NAME}"
+python "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
   --pipeline predicted_vcot \
   --experiment-name "${EXPERIMENT_NAME}" \
   --meta-path "${META_PATH}" \
+  --data-index-root "${DATA_INDEX_ROOT}" \
   --output-dir "${OUTPUT_DIR}" \
   --config-path "${VCOT_CONFIG_PATH}" \
   --model-path "${MODEL_PATH}" \

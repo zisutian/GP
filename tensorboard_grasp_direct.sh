@@ -2,9 +2,10 @@
 set -euo pipefail
 
 GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "${GP_ROOT}/InternVL/internvl_chat"
+source "${GP_ROOT}/grasp_paths.sh"
+cd "${INTERNVL_CHAT_ROOT}"
 
-DEFAULT_LOGDIR_SPEC="direct:work_dirs/internvl_chat_v2_5/grasp_direct_hparams,crop:work_dirs/internvl_chat_v2_5/grasp_crop_hparams,vcot:work_dirs/internvl_chat_v2_5/grasp_vcot_hparams"
+DEFAULT_LOGDIR_SPEC="direct:${GRASP_DIRECT_RUN_ROOT},crop:${GRASP_CROP_RUN_ROOT},vcot:${GRASP_VCOT_RUN_ROOT}"
 LOGDIR="${LOGDIR:-}"
 LOGDIR_SPEC="${LOGDIR_SPEC:-${DEFAULT_LOGDIR_SPEC}}"
 HOST="${HOST:-0.0.0.0}"
@@ -42,7 +43,7 @@ Then run again:
 
 By default this opens direct, crop, and vcot logs together.
 Override LOGDIR to inspect a specific directory, for example:
-  LOGDIR=work_dirs/internvl_chat_v2_5/grasp_direct_hparams bash tensorboard_grasp_direct.sh
+  LOGDIR=${GRASP_DIRECT_RUN_ROOT} bash tensorboard_grasp_direct.sh
 
 Override LOGDIR_SPEC to customize named groups, for example:
   LOGDIR_SPEC=direct:path/to/direct,crop:path/to/crop bash tensorboard_grasp_direct.sh

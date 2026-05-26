@@ -2,47 +2,45 @@
 set -euo pipefail
 
 GP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "${GP_ROOT}/scripts/grasp_run_common.sh"
+source "${GP_ROOT}/scripts/grasp_runtime_helpers.sh"
 
-CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
-GPUS="${GPUS:-2}"
-BATCH_SIZE="${BATCH_SIZE:-16}"
-PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-4}"
-RUN_EVAL="${RUN_EVAL:-1}"
-OVERWRITE_EVAL_RESULTS="${OVERWRITE_EVAL_RESULTS:-False}"
-EVAL_DATASETS="${EVAL_DATASETS:-test_seen,test_unseen}"
-PYTHON_BIN="${PYTHON_BIN:-python}"
+CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-${GRASP_CROP_CUDA_VISIBLE_DEVICES}}"
+GPUS="${GPUS:-${GRASP_TRAIN_GPUS}}"
+BATCH_SIZE="${BATCH_SIZE:-${GRASP_BATCH_SIZE}}"
+PER_DEVICE_BATCH_SIZE="${PER_DEVICE_BATCH_SIZE:-${GRASP_PER_DEVICE_BATCH_SIZE}}"
+RUN_EVAL="${RUN_EVAL:-${GRASP_RUN_EVAL}}"
+OVERWRITE_EVAL_RESULTS="${OVERWRITE_EVAL_RESULTS:-${GRASP_OVERWRITE_EVAL_RESULTS}}"
+EVAL_DATASETS="${EVAL_DATASETS:-${GRASP_EVAL_DATASETS}}"
+PYTHON_BIN="${PYTHON_BIN:-${GRASP_PYTHON_BIN}}"
 
-USE_LLM_LORA="${USE_LLM_LORA:-16}"
-LEARNING_RATE="${LEARNING_RATE:-8e-5}"
-NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS:-1}"
-FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-448}"
-TARGET_GRASP_INDEX="${TARGET_GRASP_INDEX:-0}"
-TRAIN_SCRIPT="${GP_ROOT}/InternVL/internvl_chat/shell/internvl2.5/2nd_finetune/internvl2_5_1b_grasp_crop_lmdb_lora.sh"
-TARGET_GRASP_TAG=""
-if [[ "${TARGET_GRASP_INDEX}" != "0" ]]; then
-  TARGET_GRASP_TAG="_g${TARGET_GRASP_INDEX}"
-fi
+FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE:-${GRASP_FORCE_IMAGE_SIZE}}"
+TRAIN_SCRIPT="${TRAIN_SCRIPT:-${GRASP_CROP_TRAIN_SCRIPT}}"
 
 export CUDA_VISIBLE_DEVICES
 
-prepare_meta() {
+require_crop_data() {
   local name="$1"
   local edge_expand="$2"
   local min_half="$3"
   local target_frame="$4"
-  local meta_root="${GP_ROOT}/data/vcot_grasp/crop_hparams/${name}"
+  local target_grasp_index="$5"
+  local meta_root="${GRASP_CROP_INDEX_ROOT}/${name}"
   local meta_path="${meta_root}/internvl_meta_train.json"
+  local splits=(train)
 
-  "${PYTHON_BIN}" "${GP_ROOT}/scripts/ensure_grasp_data.py" crop \
+  if should_run_eval; then
+    for split in $(default_dataset_splits "${EVAL_DATASETS}"); do
+      splits+=("${split}")
+    done
+  fi
+  "${PYTHON_BIN}" "${GP_ROOT}/data_tools/check_grasp_data.py" crop \
     --meta-path "${meta_path}" \
-    --output-root "${meta_root}" \
-    --splits train test_seen test_unseen \
+    --data-index-root "${meta_root}" \
+    --splits "${splits[@]}" \
     --bbox-edge-expand "${edge_expand}" \
     --min-bbox-half-size "${min_half}" \
     --target-coordinate-frame "${target_frame}" \
-    --target-grasp-index "${TARGET_GRASP_INDEX}" >&2
-  echo "${meta_path}"
+    --target-grasp-index "${target_grasp_index}"
 }
 
 write_config() {
@@ -50,15 +48,20 @@ write_config() {
   local meta_path="$2"
   local work_dir="$3"
   local max_dynamic_patch="$4"
+  local use_lora="$5"
+  local learning_rate="$6"
+  local epochs="$7"
+  local data_index_root="${GRASP_CROP_INDEX_ROOT}/${name}"
 
-  "${PYTHON_BIN}" "${GP_ROOT}/scripts/grasp_config.py" write \
+  "${PYTHON_BIN}" "${GP_ROOT}/scripts/grasp_experiment_metadata.py" write \
     --pipeline oracle_crop \
     --experiment-name "${name}" \
     --meta-path "${meta_path}" \
+    --data-index-root "${data_index_root}" \
     --output-dir "${work_dir}" \
-    --use-llm-lora "${USE_LLM_LORA}" \
-    --learning-rate "${LEARNING_RATE}" \
-    --num-train-epochs "${NUM_TRAIN_EPOCHS}" \
+    --use-llm-lora "${use_lora}" \
+    --learning-rate "${learning_rate}" \
+    --num-train-epochs "${epochs}" \
     --max-dynamic-patch "${max_dynamic_patch}" \
     --force-image-size "${FORCE_IMAGE_SIZE}" \
     --copy-to-checkpoints
@@ -66,21 +69,29 @@ write_config() {
 
 run_experiment() {
   local name="$1"
-  local edge_expand="$2"
-  local min_half="$3"
-  local target_frame="$4"
-  local max_dynamic_patch="$5"
-  local work_dir="${GP_ROOT}/InternVL/internvl_chat/work_dirs/internvl_chat_v2_5/grasp_crop_hparams/${name}"
-  local out_dir="${GP_ROOT}/result/vcot_grasp_crop/hparams/${name}"
+  local use_lora="$2"
+  local learning_rate="$3"
+  local epochs="$4"
+  local edge_expand="$5"
+  local min_half="$6"
+  local target_frame="$7"
+  local max_dynamic_patch="$8"
+  local target_grasp_index="$9"
+  local work_dir="${GRASP_CROP_RUN_ROOT}/${name}"
+  local out_dir="${GRASP_CROP_RESULT_ROOT}/${name}"
   local overwrite_output_dir="${OVERWRITE_OUTPUT_DIR:-False}"
   local meta_path
   local eval_datasets
   local eval_overwrite
   local action
 
-  echo "===== ${name} ====="
-  meta_path="$(prepare_meta "${name}" "${edge_expand}" "${min_half}" "${target_frame}")"
+  stage "experiment: ${name}"
+  meta_path="${GRASP_CROP_INDEX_ROOT}/${name}/internvl_meta_train.json"
 
+  stage "data check"
+  require_crop_data "${name}" "${edge_expand}" "${min_half}" "${target_frame}" "${target_grasp_index}"
+
+  stage "train"
   action="$(training_action "${work_dir}" "${overwrite_output_dir}")"
   if [[ "${action}" == "skip" ]]; then
     echo "Skip training: existing checkpoint found in ${work_dir}"
@@ -91,16 +102,20 @@ run_experiment() {
     fi
     EXPERIMENT_NAME="${name}" \
     META_PATH="${meta_path}" \
-    USE_LLM_LORA="${USE_LLM_LORA}" \
-    LEARNING_RATE="${LEARNING_RATE}" \
-    NUM_TRAIN_EPOCHS="${NUM_TRAIN_EPOCHS}" \
+    USE_LLM_LORA="${use_lora}" \
+    LEARNING_RATE="${learning_rate}" \
+    NUM_TRAIN_EPOCHS="${epochs}" \
     MAX_DYNAMIC_PATCH="${max_dynamic_patch}" \
     FORCE_IMAGE_SIZE="${FORCE_IMAGE_SIZE}" \
     BBOX_EDGE_EXPAND="${edge_expand}" \
     MIN_BBOX_HALF_SIZE="${min_half}" \
     TARGET_COORDINATE_FRAME="${target_frame}" \
-    TARGET_GRASP_INDEX="${TARGET_GRASP_INDEX}" \
-    TRAINING_LOG_PATH="work_dirs/internvl_chat_v2_5/grasp_crop_hparams/${name}/logs/train.log" \
+    TARGET_GRASP_INDEX="${target_grasp_index}" \
+    GRASP_DATASET_ROOT="${GRASP_DATASET_ROOT}" \
+    DATA_INDEX_ROOT="${GRASP_CROP_INDEX_ROOT}/${name}" \
+    OUTPUT_ROOT="${GRASP_CROP_RUN_ROOT}" \
+    MODEL_PATH="${GRASP_MODEL_PATH}" \
+    TRAINING_LOG_PATH="${work_dir}/logs/train.log" \
     OVERWRITE_OUTPUT_DIR="${overwrite_output_dir}" \
     GPUS="${GPUS}" \
     BATCH_SIZE="${BATCH_SIZE}" \
@@ -108,9 +123,11 @@ run_experiment() {
     bash "${TRAIN_SCRIPT}"
   fi
 
-  write_config "${name}" "${meta_path}" "${work_dir}" "${max_dynamic_patch}"
+  stage "config"
+  write_config "${name}" "${meta_path}" "${work_dir}" "${max_dynamic_patch}" "${use_lora}" "${learning_rate}" "${epochs}"
 
   if should_run_eval; then
+    stage "eval"
     if skip_eval_without_checkpoint "${work_dir}"; then
       return
     fi
@@ -129,17 +146,16 @@ run_experiment() {
     fi
     WORK_DIR="${work_dir}" \
     OUT_DIR="${out_dir}" \
-    DATASET_ROOT="${GP_ROOT}/data/vcot_grasp/crop_hparams/${name}" \
-    GPUS=1 \
+    GPUS="${GRASP_EVAL_GPUS}" \
     DATASETS="${eval_datasets}" \
     bash "${GP_ROOT}/eval/eval_grasp_crop_lmdb_lora.sh" \
       2>&1 | tee -a "${out_dir}/${name}.eval.log"
+  else
+    stage "eval"
+    echo "Skip eval: RUN_EVAL=${RUN_EVAL}"
   fi
 }
 
-run_experiment "crop_object_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_edge15_half50${TARGET_GRASP_TAG}" 15 50 full_image 6
-run_experiment "crop_full_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_edge5_half40${TARGET_GRASP_TAG}" 5 40 full_image 6
-run_experiment "crop_full_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_edge10_half40${TARGET_GRASP_TAG}" 10 40 full_image 6
-run_experiment "crop_frame_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_edge5_half40${TARGET_GRASP_TAG}" 5 40 crop_image 6
-run_experiment "crop_frame_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch6_edge10_half40${TARGET_GRASP_TAG}" 10 40 crop_image 6
-run_experiment "crop_frame_lora${USE_LLM_LORA}_lr${LEARNING_RATE}_ep${NUM_TRAIN_EPOCHS}_patch8_edge10_half40${TARGET_GRASP_TAG}" 10 40 crop_image 8
+while IFS=$'\t' read -r name use_lora learning_rate epochs edge_expand min_half target_frame max_dynamic_patch target_grasp_index; do
+  run_experiment "${name}" "${use_lora}" "${learning_rate}" "${epochs}" "${edge_expand}" "${min_half}" "${target_frame}" "${max_dynamic_patch}" "${target_grasp_index}"
+done < <("${PYTHON_BIN}" "${GP_ROOT}/grasp_settings.py" experiments crop)

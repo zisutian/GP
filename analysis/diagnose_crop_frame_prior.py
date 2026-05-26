@@ -18,6 +18,7 @@ import torch
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
+from grasp_settings import build_settings  # noqa: E402
 from data_tools.vcot_crop_lmdb import (  # noqa: E402
     crop_box_from_bbox,
     mask_to_bbox_position,
@@ -26,10 +27,11 @@ from data_tools.vcot_crop_lmdb import (  # noqa: E402
 )
 
 
-DEFAULT_SUMMARY_CSV = REPO_ROOT / "rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/summary.csv"
-DEFAULT_OUT_DIR = REPO_ROOT / "rescore_result/all_methods_direct_grasp_oracle_crop_predicted_vcot/analysis"
-DEFAULT_GRASP_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/grasp_label_positive").resolve()
-DEFAULT_MASK_LMDB = (REPO_ROOT / "../VCoT-Grasp-self/data/grasp_anything/lmdb/mask").resolve()
+SETTINGS = build_settings()
+DEFAULT_OUT_DIR = Path(SETTINGS["GRASP_ANALYSIS_ALL_ROOT"])
+DEFAULT_SUMMARY_CSV = Path(SETTINGS["GRASP_ANALYSIS_ALL_ROOT"]) / "summary.csv"
+DEFAULT_GRASP_LMDB = Path(SETTINGS["GRASP_GRASP_LMDB"])
+DEFAULT_MASK_LMDB = Path(SETTINGS["GRASP_MASK_LMDB"])
 IMAGE_SIZE = 416
 COORDS = ["x", "y", "w", "h", "angle"]
 
