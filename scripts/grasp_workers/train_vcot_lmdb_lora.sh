@@ -73,6 +73,7 @@ python "${GP_ROOT}/data_tools/check_grasp_data.py" vcot \
   --data-index-root "${DATA_INDEX_ROOT}" \
   --crop-root "${CROP_ROOT}" \
   --bbox-root "${BBOX_ROOT}" \
+  --bbox-ratio "${BBOX_RATIO}" \
   --bbox-loss-weight "${BBOX_LOSS_WEIGHT}" \
   --bbox-edge-expand "${BBOX_EDGE_EXPAND}" \
   --min-bbox-half-size "${MIN_BBOX_HALF_SIZE}" \

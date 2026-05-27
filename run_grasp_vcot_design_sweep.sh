@@ -44,6 +44,7 @@ require_vcot_data() {
     --data-index-root "${meta_root}"
     --crop-root "${crop_root}"
     --bbox-root "${GRASP_BBOX_INDEX_ROOT}"
+    --bbox-ratio "${bbox_ratio}"
     --bbox-loss-weight "${bbox_loss_weight}"
     --bbox-edge-expand "${edge_expand}"
     --min-bbox-half-size "${min_half}"

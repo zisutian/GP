@@ -87,18 +87,42 @@ def check_crop_config(
         raise ValueError(f"Crop data index config mismatch: {path}\n" + "\n".join(errors))
 
 
-def check_vcot_loss_weight(meta_path: Path, expected_bbox_loss_weight: float | None) -> None:
-    if expected_bbox_loss_weight is None:
-        return
+def vcot_bbox_meta(meta_path: Path) -> dict[str, Any]:
     meta = read_json(meta_path)
-    bbox_meta = next(
+    return next(
         (entry for entry in meta.values() if entry.get("vcot_dataset") == "grasp_anything_bbox"),
         {},
     )
+
+
+def float_matches(actual: Any, expected: float) -> bool:
+    try:
+        return abs(float(actual) - float(expected)) <= 1e-9
+    except (TypeError, ValueError):
+        return False
+
+
+def check_vcot_bbox_ratio(meta_path: Path, expected_bbox_ratio: float | None) -> None:
+    if expected_bbox_ratio is None:
+        return
+    bbox_meta = vcot_bbox_meta(meta_path)
+    expected_repeat_time = max(0.0, min(1.0, float(expected_bbox_ratio)))
+    actual = bbox_meta.get("repeat_time")
+    if not float_matches(actual, expected_repeat_time):
+        raise ValueError(
+            f"VCoT bbox ratio mismatch: {meta_path}\n"
+            f"expected repeat_time {expected_repeat_time!r} from bbox_ratio {expected_bbox_ratio!r}, got {actual!r}"
+        )
+
+
+def check_vcot_loss_weight(meta_path: Path, expected_bbox_loss_weight: float | None) -> None:
+    if expected_bbox_loss_weight is None:
+        return
+    bbox_meta = vcot_bbox_meta(meta_path)
     actual = bbox_meta.get("vcot_loss_weight")
     if actual is None and float(expected_bbox_loss_weight) == 1.0:
         return
-    if actual is None or float(actual) != float(expected_bbox_loss_weight):
+    if not float_matches(actual, float(expected_bbox_loss_weight)):
         raise ValueError(
             f"VCoT bbox loss weight mismatch: {meta_path}\n"
             f"expected {expected_bbox_loss_weight!r}, got {actual!r}"
@@ -134,6 +158,7 @@ def parse_args() -> argparse.Namespace:
     vcot.add_argument("--crop-root", required=True)
     vcot.add_argument("--bbox-root", default=SETTINGS["GRASP_BBOX_INDEX_ROOT"])
     vcot.add_argument("--eval-splits", nargs="+", default=[])
+    vcot.add_argument("--bbox-ratio", type=float, default=None)
     vcot.add_argument("--bbox-loss-weight", type=float, default=None)
     vcot.add_argument("--bbox-edge-expand", type=int, required=True)
     vcot.add_argument("--min-bbox-half-size", type=int, required=True)
@@ -194,6 +219,7 @@ def check_vcot(
     min_bbox_half_size: int,
     target_coordinate_frame: str,
     target_grasp_index: int,
+    bbox_ratio: float | None = None,
     bbox_loss_weight: float | None = None,
 ) -> None:
     meta = Path(meta_path).expanduser().resolve()
@@ -201,6 +227,7 @@ def check_vcot(
     crop = Path(crop_root).expanduser().resolve()
     bbox = Path(bbox_root).expanduser().resolve()
     check_meta(meta)
+    check_vcot_bbox_ratio(meta, bbox_ratio)
     check_vcot_loss_weight(meta, bbox_loss_weight)
     check_splits(root, eval_splits)
     check_crop_config(
@@ -257,6 +284,7 @@ def check_all(splits: list[str], eval_splits: list[str]) -> None:
             int(min_half),
             target_frame,
             int(target_grasp_index),
+            float(_bbox_ratio),
             float(bbox_loss_weight),
         )
 
@@ -288,6 +316,7 @@ def main() -> None:
             args.min_bbox_half_size,
             args.target_coordinate_frame,
             args.target_grasp_index,
+            args.bbox_ratio,
             args.bbox_loss_weight,
         )
     elif args.command == "all":
