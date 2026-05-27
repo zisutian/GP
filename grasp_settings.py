@@ -42,13 +42,13 @@ VCOT_EVAL_MASTER_PORT = "63689"
 
 DIRECT_EXPERIMENTS = [
     ("baseline_lora16_lr4e-5_ep1_patch6", "16", "4e-5", "1", "6"),
-    ("lora8_lr4e-5_ep1_patch6", "8", "4e-5", "1", "6"),
-    ("lora32_lr4e-5_ep1_patch6", "32", "4e-5", "1", "6"),
-    ("lora16_lr2e-5_ep1_patch6", "16", "2e-5", "1", "6"),
-    ("lora16_lr8e-5_ep1_patch6", "16", "8e-5", "1", "6"),
-    ("lora16_lr4e-5_ep2_patch6", "16", "4e-5", "2", "6"),
-    ("lora16_lr4e-5_ep1_patch4", "16", "4e-5", "1", "4"),
-    ("lora16_lr4e-5_ep1_patch1", "16", "4e-5", "1", "1"),
+    ("direct_lora8_lr4e-5_ep1_patch6", "8", "4e-5", "1", "6"),
+    ("direct_lora32_lr4e-5_ep1_patch6", "32", "4e-5", "1", "6"),
+    ("direct_lora16_lr2e-5_ep1_patch6", "16", "2e-5", "1", "6"),
+    ("direct_lora16_lr8e-5_ep1_patch6", "16", "8e-5", "1", "6"),
+    ("direct_lora16_lr4e-5_ep2_patch6", "16", "4e-5", "2", "6"),
+    ("direct_lora16_lr4e-5_ep1_patch4", "16", "4e-5", "1", "4"),
+    ("direct_lora16_lr4e-5_ep1_patch1", "16", "4e-5", "1", "1"),
 ]
 
 CROP_EXPERIMENTS = [

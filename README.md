@@ -266,13 +266,13 @@ analysis 以 result summary 里的 checkpoint + loaded_vcot_config 为准。
 
 ```text
 baseline_lora16_lr4e-5_ep1_patch6
-lora8_lr4e-5_ep1_patch6
-lora32_lr4e-5_ep1_patch6
-lora16_lr2e-5_ep1_patch6
-lora16_lr8e-5_ep1_patch6
-lora16_lr4e-5_ep2_patch6
-lora16_lr4e-5_ep1_patch4
-lora16_lr4e-5_ep1_patch1
+direct_lora8_lr4e-5_ep1_patch6
+direct_lora32_lr4e-5_ep1_patch6
+direct_lora16_lr2e-5_ep1_patch6
+direct_lora16_lr8e-5_ep1_patch6
+direct_lora16_lr4e-5_ep2_patch6
+direct_lora16_lr4e-5_ep1_patch4
+direct_lora16_lr4e-5_ep1_patch1
 ```
 
 当前 oracle crop design sweep 搜索范围：
